@@ -159,8 +159,8 @@ private fun ColorSortScreen(
                             }
                         }
                         .padding(6.dp),
-                    verticalArrangement = Arrangement.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(if (isBolts) 4.dp else 0.dp)
+                    verticalArrangement = Arrangement.spacedBy(if (isBolts) 4.dp else 0.dp, Alignment.Bottom),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     stack.reversed().forEach { cIdx ->
                         Box(

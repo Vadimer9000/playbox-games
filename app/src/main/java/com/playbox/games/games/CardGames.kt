@@ -596,12 +596,14 @@ fun HeartsScreen(
             val leadSuit = nextTrick.first().second.suit
             val winnerPair = nextTrick.filter { it.second.suit == leadSuit }
                 .maxBy { if (it.second.rank == 1) 14 else it.second.rank }
-            val trickPts = nextTrick.sumOf { (_, c) ->
-                when {
+            val trickPts: Int = nextTrick.sumOf { pair ->
+                val c = pair.second
+                val pts: Int = when {
                     c.suit == 1 -> 1
                     c.suit == 0 && c.rank == 12 -> 13
                     else -> 0
                 }
+                pts
             }
             val np = points.copyOf()
             np[winnerPair.first] += trickPts

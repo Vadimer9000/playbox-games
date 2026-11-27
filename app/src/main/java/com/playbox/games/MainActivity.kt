@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import com.playbox.games.data.PlayerPrefs
 import com.playbox.games.games.*
 import com.playbox.games.model.GameCatalog
@@ -100,6 +101,7 @@ private fun PlayBoxApp(prefs: PlayerPrefs, onlineClient: OnlineClient) {
         }
 
         val def = GameCatalog.get(current.gameId)
+        val isDarkGame = def.cardBg.luminance() < 0.36f
         val exitGame: () -> Unit = {
             if (current.mode == PlayMode.ONLINE) onlineClient.disconnect()
             activeLaunch = null
@@ -108,7 +110,7 @@ private fun PlayBoxApp(prefs: PlayerPrefs, onlineClient: OnlineClient) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(PlayBoxColors.CreamBg)
+                .background(if (isDarkGame) def.cardBg else PlayBoxColors.CreamBg)
                 .navigationBarsPadding()
         ) {
             GameTopBar(
@@ -118,6 +120,7 @@ private fun PlayBoxApp(prefs: PlayerPrefs, onlineClient: OnlineClient) {
                 difficulty = current.difficulty,
                 roomState = roomState,
                 opponentEmoji = opponentEmoji,
+                themeBg = def.cardBg,
                 onBack = exitGame,
                 onRestart = {
                     if (current.mode == PlayMode.ONLINE) onlineClient.requestRematch()

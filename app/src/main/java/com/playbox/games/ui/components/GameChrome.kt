@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -112,16 +113,25 @@ fun GameTopBar(
     difficulty: BotDifficulty,
     roomState: OnlineRoomState?,
     opponentEmoji: String?,
+    themeBg: Color = PlayBoxColors.HeaderSurface,
     onBack: () -> Unit,
     onRestart: () -> Unit,
     onSendEmoji: (String) -> Unit
 ) {
     var showRules by remember { mutableStateOf(false) }
+    val isDark = themeBg != PlayBoxColors.HeaderSurface && themeBg.luminance() < 0.36f
+    val barBg = if (isDark) themeBg else PlayBoxColors.HeaderSurface
+    val btnBg = if (isDark) Color.White.copy(alpha = 0.14f) else PlayBoxColors.CreamBg
+    val backBg = if (isDark) Color.White else PlayBoxColors.CreamBg
+    val backTint = if (isDark) Color(0xFFE0526D) else PlayBoxColors.DarkInk
+    val iconTint = if (isDark) Color.White else PlayBoxColors.DarkInk
+    val titleColor = if (isDark) Color.White else PlayBoxColors.DarkInk
+    val subColor = if (isDark) Color.White.copy(alpha = 0.72f) else PlayBoxColors.MutedInk
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(PlayBoxColors.HeaderSurface)
+            .background(barBg)
             .statusBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
@@ -132,11 +142,11 @@ fun GameTopBar(
             IconButton(
                 onClick = onBack,
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(PlayBoxColors.CreamBg)
+                    .background(backBg)
             ) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад", tint = PlayBoxColors.DarkInk)
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад", tint = backTint)
             }
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -144,7 +154,7 @@ fun GameTopBar(
                     text = title.replace("\n", " "),
                     fontSize = 17.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = PlayBoxColors.DarkInk,
+                    color = titleColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -160,7 +170,7 @@ fun GameTopBar(
                 Text(
                     text = subtitle,
                     fontSize = 12.sp,
-                    color = PlayBoxColors.MutedInk,
+                    color = subColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -195,21 +205,21 @@ fun GameTopBar(
             IconButton(
                 onClick = { showRules = true },
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(PlayBoxColors.CreamBg)
+                    .background(btnBg)
             ) {
-                Icon(Icons.AutoMirrored.Rounded.HelpOutline, contentDescription = "Правила", tint = PlayBoxColors.DarkInk)
+                Icon(Icons.AutoMirrored.Rounded.HelpOutline, contentDescription = "Правила", tint = iconTint)
             }
             Spacer(Modifier.width(6.dp))
             IconButton(
                 onClick = onRestart,
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(PlayBoxColors.CreamBg)
+                    .background(btnBg)
             ) {
-                Icon(Icons.Rounded.Refresh, contentDescription = "Заново", tint = PlayBoxColors.DarkInk)
+                Icon(Icons.Rounded.Refresh, contentDescription = "Заново", tint = iconTint)
             }
         }
 
@@ -226,7 +236,7 @@ fun GameTopBar(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(PlayBoxColors.CreamBg)
+                                .background(btnBg)
                                 .bounceClick { onSendEmoji(e) }
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
@@ -239,7 +249,7 @@ fun GameTopBar(
                         text = "Счёт ${roomState.scoreP1} : ${roomState.scoreP2}",
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 13.sp,
-                        color = PlayBoxColors.OnlinePurple,
+                        color = if (isDark) PlayBoxColors.BoltGold else PlayBoxColors.OnlinePurple,
                         maxLines = 1
                     )
                 }
@@ -294,7 +304,8 @@ fun GameResultBanner(
     mode: PlayMode,
     roomState: OnlineRoomState?,
     onRematch: () -> Unit,
-    onExit: () -> Unit
+    onExit: () -> Unit,
+    rematchLabelOverride: String? = null
 ) {
     AnimatedVisibility(
         visible = true,
@@ -340,7 +351,7 @@ fun GameResultBanner(
                         val myVoted = roomState?.rematchVotes?.contains(roomState.playerIndex) == true
                         if (myVoted) "Ждём ($votes/2)" else "Реванш ($votes/2)"
                     } else {
-                        "Ещё раз"
+                        rematchLabelOverride ?: "Ещё раз"
                     }
                     PlayBoxButton(
                         onClick = onRematch,

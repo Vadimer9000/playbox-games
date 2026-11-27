@@ -1,13 +1,20 @@
 package com.playbox.games.games
 
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,9 +27,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,16 +50,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.playbox.games.data.PlayerPrefs
 import com.playbox.games.model.GameId
 import com.playbox.games.model.LaunchConfig
@@ -65,7 +88,138 @@ internal val SORT_PALETTE = listOf(
     Color(0xFFFFCA3A), Color(0xFF9B5DE5), Color(0xFFF3722C)
 )
 
-// Shared engine for WaterSort & NutsBolts with animated lift!
+private data class SortColorSpec(
+    val face: Color,
+    val leftSide: Color,
+    val rightSide: Color,
+    val topBevel: Color,
+    val symbolShade: Color
+)
+
+private val NUT_SORT_SPECS = listOf(
+    // 0: Pink Crown
+    SortColorSpec(Color(0xFFFA68AB), Color(0xFFC23676), Color(0xFFE0488E), Color(0xFFFF9CC9), Color(0xFF8C1C50)),
+    // 1: Orange Lightning
+    SortColorSpec(Color(0xFFFB7D1E), Color(0xFFC24D06), Color(0xFFE3620C), Color(0xFFFFA75C), Color(0xFF8C3500)),
+    // 2: Crimson Heart
+    SortColorSpec(Color(0xFFE42D3C), Color(0xFF9F1422), Color(0xFFC41F2E), Color(0xFFFF6D7A), Color(0xFF700B15)),
+    // 3: Cobalt Drop
+    SortColorSpec(Color(0xFF1982E6), Color(0xFF0C54A1), Color(0xFF136BC4), Color(0xFF63B3FF), Color(0xFF073A73)),
+    // 4: Emerald Clover
+    SortColorSpec(Color(0xFF28B92E), Color(0xFF147819), Color(0xFF1E9923), Color(0xFF6DE372), Color(0xFF0D5710)),
+    // 5: Sunny Yellow Sun
+    SortColorSpec(Color(0xFFFFCA1A), Color(0xFFC88D04), Color(0xFFE8AB0B), Color(0xFFFFE16B), Color(0xFF916200)),
+    // 6: Violet Diamond
+    SortColorSpec(Color(0xFF9D4EDD), Color(0xFF65219E), Color(0xFF7E36BE), Color(0xFFC891F5), Color(0xFF471275))
+)
+
+private fun isSortContainerDone(stack: List<Int>): Boolean =
+    stack.size == 4 && stack.distinct().size == 1
+
+private fun findBestSortHint(containers: List<List<Int>>): Pair<Int, Int>? {
+    if (containers.all { it.isEmpty() || isSortContainerDone(it) }) return null
+
+    fun validMoves(state: List<List<Int>>): List<Pair<Int, Int>> {
+        val out = mutableListOf<Pair<Int, Int>>()
+        var usedEmptyDst = false
+        for (i in state.indices) {
+            val src = state[i]
+            if (src.isEmpty() || isSortContainerDone(src)) continue
+            val top = src.last()
+            val mono = src.all { it == top }
+            for (j in state.indices) {
+                if (i == j) continue
+                val dst = state[j]
+                if (dst.size >= 4) continue
+                if (dst.isEmpty()) {
+                    if (mono || usedEmptyDst) continue
+                    usedEmptyDst = true
+                    out.add(i to j)
+                } else if (dst.last() == top) {
+                    var cnt = 0
+                    for (k in src.lastIndex downTo 0) {
+                        if (src[k] == top) cnt++ else break
+                    }
+                    if (dst.size + cnt <= 4) out.add(i to j)
+                }
+            }
+        }
+        return out
+    }
+
+    fun applyMove(state: List<List<Int>>, from: Int, to: Int): List<List<Int>> {
+        val src = state[from]
+        val dst = state[to]
+        val top = src.last()
+        var count = 0
+        for (k in src.lastIndex downTo 0) {
+            if (src[k] == top && dst.size + count < 4) count++ else break
+        }
+        return state.mapIndexed { idx, list ->
+            when (idx) {
+                from -> list.dropLast(count)
+                to -> list + List(count) { top }
+                else -> list
+            }
+        }
+    }
+
+    fun canonicalKey(state: List<List<Int>>): String =
+        state.map { it.joinToString(",") }.sorted().joinToString("|")
+
+    val queue = ArrayDeque<Pair<List<List<Int>>, Pair<Int, Int>>>()
+    val visited = HashSet<String>(2400)
+    visited.add(canonicalKey(containers))
+
+    val initialMoves = validMoves(containers)
+    if (initialMoves.isEmpty()) return null
+
+    for (mv in initialMoves) {
+        val next = applyMove(containers, mv.first, mv.second)
+        if (next.all { it.isEmpty() || isSortContainerDone(it) }) return mv
+        val key = canonicalKey(next)
+        if (visited.add(key)) queue.addLast(next to mv)
+    }
+
+    var steps = 0
+    while (queue.isNotEmpty() && steps < 2200) {
+        val (cur, firstMv) = queue.removeFirst()
+        steps++
+        for (mv in validMoves(cur)) {
+            val next = applyMove(cur, mv.first, mv.second)
+            if (next.all { it.isEmpty() || isSortContainerDone(it) }) return firstMv
+            val key = canonicalKey(next)
+            if (visited.add(key)) queue.addLast(next to firstMv)
+        }
+    }
+
+    // Heuristic fallback if deep puzzle
+    return initialMoves.maxByOrNull { (f, t) ->
+        val next = applyMove(containers, f, t)
+        val dstAfter = next[t]
+        var score = 0
+        if (isSortContainerDone(dstAfter)) score += 120
+        if (containers[t].isNotEmpty()) score += 45 + dstAfter.size * 10
+        if (next[f].isEmpty()) score += 25
+        score
+    }
+}
+
+private fun hasAnySortMove(containers: List<List<Int>>): Boolean {
+    for (i in containers.indices) {
+        val src = containers[i]
+        if (src.isEmpty() || isSortContainerDone(src)) continue
+        val top = src.last()
+        for (j in containers.indices) {
+            if (i == j) continue
+            val dst = containers[j]
+            if (dst.size < 4 && (dst.isEmpty() || dst.last() == top)) return true
+        }
+    }
+    return false
+}
+
+// Shared AAA engine for NutsBolts & WaterSort with 3D graphics, 2-row layout, BFS hints & ad-free extra slots!
 @Composable
 private fun ColorSortScreen(
     gameId: GameId,
@@ -81,7 +235,14 @@ private fun ColorSortScreen(
     var seed by remember(resetSignal) { mutableIntStateOf(config.seed) }
 
     fun buildContainers(lvl: Int, s: Int): List<List<Int>> {
-        val colorCount = (3 + (lvl / 2)).coerceAtMost(6)
+        val colorCount = (3 + ((lvl + 1) / 2)).coerceIn(4, 7)
+        for (attempt in 0..8) {
+            val rng = Random(s + lvl * 31 + attempt * 97)
+            val pool = (0 until colorCount).flatMap { c -> List(4) { c } }.shuffled(rng)
+            val filled = (0 until colorCount).map { i -> pool.subList(i * 4, (i + 1) * 4) }
+            val validStart = filled.none { isSortContainerDone(it) }
+            if (validStart) return filled + listOf(emptyList(), emptyList())
+        }
         val rng = Random(s + lvl * 31)
         val pool = (0 until colorCount).flatMap { c -> List(4) { c } }.shuffled(rng)
         val filled = (0 until colorCount).map { i -> pool.subList(i * 4, (i + 1) * 4) }
@@ -91,9 +252,27 @@ private fun ColorSortScreen(
     var containers by remember(level, seed) { mutableStateOf(buildContainers(level, seed)) }
     var history by remember(level, seed) { mutableStateOf<List<List<List<Int>>>>(emptyList()) }
     var selectedIdx by remember(level, seed) { mutableStateOf<Int?>(null) }
+    var movesCount by remember(level, seed) { mutableIntStateOf(0) }
+    var hintsLeft by remember(level, seed) { mutableIntStateOf(3) }
+    var extraUsed by remember(level, seed) { mutableStateOf(false) }
+    var hintPair by remember(level, seed) { mutableStateOf<Pair<Int, Int>?>(null) }
     var oppLevel by remember(resetSignal) { mutableIntStateOf(1) }
 
-    val solved = containers.all { it.isEmpty() || (it.size == 4 && it.distinct().size == 1) }
+    val colorGroupsTotal = remember(level) { (3 + ((level + 1) / 2)).coerceIn(4, 7) }
+    val completedGroups = containers.count { isSortContainerDone(it) }
+    val solved = containers.all { it.isEmpty() || isSortContainerDone(it) }
+    val stuck = !solved && !hasAnySortMove(containers)
+
+    val diffLabel = when {
+        level <= 2 -> "ЛЁГКИЙ"
+        level <= 5 -> "СРЕДНИЙ"
+        else -> "СЛОЖНЫЙ"
+    }
+    val diffColor = when {
+        level <= 2 -> Color(0xFF28B92E)
+        level <= 5 -> Color(0xFFFFA726)
+        else -> Color(0xFFE0526D)
+    }
 
     LaunchedEffect(config.mode) {
         if (config.mode == PlayMode.ONLINE) {
@@ -114,93 +293,850 @@ private fun ColorSortScreen(
         }
     }
 
-    fun tryPour(from: Int, to: Int) {
-        if (from == to) return
+    fun tryMove(from: Int, to: Int): Boolean {
+        if (from == to) return false
         val src = containers[from]; val dst = containers[to]
-        if (src.isEmpty() || dst.size >= 4) return
+        if (src.isEmpty() || dst.size >= 4) return false
         val topColor = src.last()
-        if (dst.isNotEmpty() && dst.last() != topColor) return
+        if (dst.isNotEmpty() && dst.last() != topColor) return false
         var count = 0
         for (i in src.lastIndex downTo 0) {
             if (src[i] == topColor && dst.size + count < 4) count++ else break
         }
-        if (count == 0) return
+        if (count == 0) return false
         history = history + listOf(containers)
         containers = containers.mapIndexed { idx, list ->
             when (idx) { from -> list.dropLast(count); to -> list + List(count) { topColor }; else -> list }
         }
+        movesCount++
+        hintPair = null
+        return true
+    }
+
+    val pulseTransition = rememberInfiniteTransition(label = "hintPulse")
+    val pulseAlpha by pulseTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
+        label = "pulseAlpha"
+    )
+
+    val bgBrush = if (isBolts) {
+        Brush.radialGradient(listOf(Color(0xFF331B52), Color(0xFF221138), Color(0xFF170B28)))
+    } else {
+        Brush.radialGradient(listOf(Color(0xFF563966), Color(0xFF3B2447), Color(0xFF271730)))
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(if (isBolts) Color(0xFF221E2A) else Color(0xFF43304A)).padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(bgBrush)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            ScorePill("Уровень", level, PlayBoxColors.BoltGold, true)
-            if (config.mode == PlayMode.ONLINE) ScorePill("Соп. ур.", oppLevel, PlayBoxColors.OnlinePurple, false)
-            PlayBoxOutlinedButton(
-                enabled = history.isNotEmpty(),
-                onClick = { containers = history.last(); history = history.dropLast(1); selectedIdx = null },
-                contentColor = Color.White,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-            ) { Text("↩ Отмена", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
+        // Level & Progress Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White.copy(alpha = 0.1f),
+                modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+            ) {
+                Text(
+                    text = "Ходы: $movesCount",
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = diffColor.copy(alpha = 0.22f),
+                    modifier = Modifier.border(1.dp, diffColor.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                ) {
+                    Text(
+                        text = diffLabel,
+                        color = diffColor,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.8.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Уровень $level",
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            if (config.mode == PlayMode.ONLINE) {
+                ScorePill("Соп. ур.", oppLevel, PlayBoxColors.OnlinePurple, false)
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White.copy(alpha = 0.1f),
+                    modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+                ) {
+                    Text(
+                        text = "Собрано $completedGroups/$colorGroupsTotal",
+                        color = PlayBoxColors.BoltGold,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
         }
+
+        // Subtle animated progress bar
+        Spacer(Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.75f)
+                .height(6.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.12f))
+        ) {
+            val pct = (completedGroups.toFloat() / colorGroupsTotal.toFloat()).coerceIn(0f, 1f)
+            val animPct by animateFloatAsState(pct, spring(stiffness = Spring.StiffnessMediumLow), label = "prog")
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(animPct)
+                    .height(6.dp)
+                    .clip(CircleShape)
+                    .background(Brush.horizontalGradient(listOf(PlayBoxColors.BoltGold, PlayBoxColors.SuccessGreen)))
+            )
+        }
+
+        if (stuck) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFFE63946).copy(alpha = 0.25f),
+                modifier = Modifier.border(1.dp, Color(0xFFE63946).copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+            ) {
+                Text(
+                    text = if (!extraUsed) "Нет ходов! Нажми «Отменить» или «+ ${if (isBolts) "Болт" else "Колба"}»"
+                    else "Нет ходов! Нажми «Отменить» или сбрось уровень",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+
         Spacer(Modifier.weight(1f))
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            containers.forEachIndexed { idx, stack ->
-                val isSel = selectedIdx == idx
-                val topLift by animateDpAsState(if (isSel) (-12).dp else 0.dp, spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "lift_$idx")
-                Box(
-                    modifier = Modifier
-                        .width(48.dp)
-                        .height(176.dp)
-                        .clickable(enabled = !solved) {
-                            val sel = selectedIdx
-                            if (sel == null) { if (stack.isNotEmpty()) selectedIdx = idx }
-                            else { tryPour(sel, idx); selectedIdx = null }
-                        },
-                    contentAlignment = Alignment.BottomCenter
-                ) {
-                    if (isBolts) {
-                        // Metallic bolt rod + base
-                        Box(Modifier.width(12.dp).height(152.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFFCBD5E1)))
-                        Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF94A3B8)))
-                    } else {
-                        // Glass test tube outline
-                        Box(
-                            Modifier.fillMaxWidth().height(162.dp)
-                                .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp, topStart = 6.dp, topEnd = 6.dp))
-                                .background(Color.White.copy(alpha = 0.14f))
-                                .border(2.5.dp, if (isSel) PlayBoxColors.BoltGold else Color.White.copy(alpha = 0.72f), RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp, topStart = 6.dp, topEnd = 6.dp))
-                        )
-                    }
+        // Responsive 1-row or 2-row container grid (just like 4+4/5 layout in top-tier puzzle games)
+        val splitTop = if (containers.size <= 4) containers.size else (containers.size + 1) / 2
+        val rowIndices = if (containers.size <= 4) {
+            listOf(containers.indices.toList())
+        } else {
+            listOf((0 until splitTop).toList(), (splitTop until containers.size).toList())
+        }
+        val itemWidth = when {
+            splitTop <= 4 -> 72.dp
+            else -> 64.dp
+        }
+        val itemHeight = if (rowIndices.size == 1) 216.dp else 182.dp
 
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = if (isBolts) 12.dp else 5.dp),
-                        verticalArrangement = Arrangement.spacedBy(if (isBolts) 4.dp else 0.dp, Alignment.Bottom),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        stack.reversed().forEachIndexed { posFromTop, cIdx ->
-                            val liftMod = if (posFromTop == 0) Modifier.offset(y = topLift) else Modifier
-                            val c = SORT_PALETTE[cIdx % SORT_PALETTE.size]
-                            Box(
-                                liftMod.fillMaxWidth().height(34.dp)
-                                    .clip(RoundedCornerShape(if (isBolts) 9.dp else 6.dp))
-                                    .background(Brush.horizontalGradient(listOf(c, c.copy(alpha = 0.82f), c)))
-                                    .border(if (isBolts) 1.5.dp else 0.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(9.dp))
-                            )
-                        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            rowIndices.forEach { indicesInRow ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    indicesInRow.forEach { idx ->
+                        val stack = containers[idx]
+                        val isSel = selectedIdx == idx
+                        val isDone = isSortContainerDone(stack)
+                        val isHintSrc = hintPair?.first == idx
+                        val isHintDst = hintPair?.second == idx
+                        val canReceiveFromSel = selectedIdx != null && selectedIdx != idx &&
+                            stack.size < 4 && containers[selectedIdx!!].isNotEmpty() &&
+                            (stack.isEmpty() || stack.last() == containers[selectedIdx!!].last())
+
+                        SortContainerItem(
+                            isBolts = isBolts,
+                            stack = stack,
+                            width = itemWidth,
+                            height = itemHeight,
+                            isSelected = isSel,
+                            isCompleted = isDone,
+                            isValidTarget = canReceiveFromSel,
+                            hintGlowAlpha = if (isHintSrc || isHintDst) pulseAlpha else 0f,
+                            hintLabel = when {
+                                isHintSrc -> "ВЗЯТЬ"
+                                isHintDst -> "СЮДА"
+                                else -> null
+                            },
+                            enabled = !solved,
+                            onClick = {
+                                val sel = selectedIdx
+                                if (sel == null) {
+                                    if (stack.isNotEmpty() && !isDone) selectedIdx = idx
+                                } else if (sel == idx) {
+                                    selectedIdx = null
+                                } else {
+                                    val moved = tryMove(sel, idx)
+                                    if (moved) {
+                                        selectedIdx = null
+                                    } else if (stack.isNotEmpty() && !isDone) {
+                                        selectedIdx = idx
+                                    } else {
+                                        selectedIdx = null
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
             }
         }
 
         Spacer(Modifier.weight(1f))
+
         if (solved) {
-            GameResultBanner("Уровень $level пройден!", "Все цвета собраны идеально", config.mode, roomState,
+            val parMoves = colorGroupsTotal * 5 + 4
+            val stars = when {
+                movesCount <= parMoves -> 3
+                movesCount <= parMoves + 8 -> 2
+                else -> 1
+            }
+            val starsText = "★".repeat(stars) + "☆".repeat(3 - stars)
+            GameResultBanner(
+                title = "Уровень $level пройден! $starsText",
+                subtitle = "Собрано за $movesCount ходов",
+                mode = config.mode,
+                roomState = roomState,
                 onRematch = { level += 1 },
-                onExit = onExit
+                onExit = onExit,
+                rematchLabelOverride = "Уровень ${level + 1}"
+            )
+        } else {
+            // Ad-Free Bottom Action Dock (all labels clearly inside tactile buttons)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                SortActionButton(
+                    icon = { Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    label = "Отменить",
+                    badgeText = if (history.isNotEmpty()) "${history.size}" else null,
+                    enabled = history.isNotEmpty(),
+                    containerColor = Color(0xFF42305E),
+                    contentColor = Color.White,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        containers = history.last()
+                        history = history.dropLast(1)
+                        selectedIdx = null
+                        hintPair = null
+                    }
+                )
+                SortActionButton(
+                    icon = { Icon(Icons.Rounded.Lightbulb, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    label = "Подсказка",
+                    badgeText = "$hintsLeft",
+                    enabled = hintsLeft > 0,
+                    containerColor = PlayBoxColors.BoltGold,
+                    contentColor = PlayBoxColors.DarkInk,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        val best = findBestSortHint(containers)
+                        if (best != null) {
+                            hintPair = best
+                            selectedIdx = best.first
+                            hintsLeft--
+                        }
+                    }
+                )
+                SortActionButton(
+                    icon = {
+                        Icon(
+                            if (extraUsed) Icons.Rounded.Check else Icons.Rounded.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    label = if (extraUsed) "Добавлен" else if (isBolts) "+ Болт" else "+ Колба",
+                    badgeText = if (!extraUsed) "FREE" else null,
+                    enabled = !extraUsed,
+                    containerColor = PlayBoxColors.SuccessGreen,
+                    contentColor = PlayBoxColors.DarkInk,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        if (!extraUsed) {
+                            containers = containers + listOf(emptyList())
+                            extraUsed = true
+                            hintPair = null
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SortActionButton(
+    icon: @Composable () -> Unit,
+    label: String,
+    badgeText: String?,
+    enabled: Boolean,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val bg = if (enabled) containerColor else Color.White.copy(alpha = 0.12f)
+    val fg = if (enabled) contentColor else Color.White.copy(alpha = 0.4f)
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = bg,
+        shadowElevation = if (enabled) 5.dp else 0.dp,
+        modifier = modifier
+            .height(54.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .border(1.5.dp, Color.White.copy(alpha = if (enabled) 0.28f else 0.08f), RoundedCornerShape(16.dp))
+            .bounceClick(enabled = enabled, onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.material3.LocalContentColor provides fg
+                ) {
+                    icon()
+                }
+                if (badgeText != null) {
+                    Spacer(Modifier.width(4.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = if (enabled) Color.Black.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.1f)
+                    ) {
+                        Text(
+                            text = badgeText,
+                            color = fg,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = label,
+                color = fg,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+@Composable
+private fun SortContainerItem(
+    isBolts: Boolean,
+    stack: List<Int>,
+    width: Dp,
+    height: Dp,
+    isSelected: Boolean,
+    isCompleted: Boolean,
+    isValidTarget: Boolean,
+    hintGlowAlpha: Float,
+    hintLabel: String?,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val topLift by animateDpAsState(
+        targetValue = if (isSelected && stack.isNotEmpty()) (-24).dp else 0.dp,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "lift"
+    )
+    val liftScale by animateFloatAsState(
+        targetValue = if (isSelected && stack.isNotEmpty()) 1.07f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "liftScale"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(height)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        // Optional hint floating pill
+        if (hintLabel != null) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = PlayBoxColors.BoltGold,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = (-6).dp)
+            ) {
+                Text(
+                    text = hintLabel,
+                    color = PlayBoxColors.DarkInk,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+        }
+
+        // Container backdrop + Bolt / Tube hardware rendered crisply on Canvas
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = this.size.width
+            val h = this.size.height
+            val baseH = h * 0.11f
+            val baseTop = h - baseH - 4.dp.toPx()
+
+            // Selection / Valid target / Completed / Hint base ring
+            val ringColor = when {
+                hintGlowAlpha > 0f -> PlayBoxColors.BoltGold.copy(alpha = hintGlowAlpha)
+                isCompleted -> Color(0xFF4ADE80).copy(alpha = 0.8f)
+                isSelected -> PlayBoxColors.BoltGold.copy(alpha = 0.9f)
+                isValidTarget -> Color.White.copy(alpha = 0.55f)
+                else -> Color.Transparent
+            }
+            if (ringColor != Color.Transparent) {
+                drawOval(
+                    color = ringColor.copy(alpha = ringColor.alpha * 0.35f),
+                    topLeft = Offset(w * 0.04f, baseTop - 3.dp.toPx()),
+                    size = Size(w * 0.92f, baseH + 8.dp.toPx()),
+                    style = Stroke(width = 3.dp.toPx())
+                )
+            }
+
+            if (isBolts) {
+                // Ground shadow
+                drawOval(
+                    color = Color.Black.copy(alpha = 0.36f),
+                    topLeft = Offset(w * 0.1f, baseTop + 4.dp.toPx()),
+                    size = Size(w * 0.8f, baseH + 2.dp.toPx())
+                )
+                // 3D Base flange side extrusion
+                drawOval(
+                    color = Color(0xFF64748B),
+                    topLeft = Offset(w * 0.1f, baseTop + 3.dp.toPx()),
+                    size = Size(w * 0.8f, baseH)
+                )
+                // 3D Base top plate
+                drawOval(
+                    brush = Brush.verticalGradient(listOf(Color(0xFFF1F5F9), Color(0xFFCBD5E1))),
+                    topLeft = Offset(w * 0.1f, baseTop - 1.dp.toPx()),
+                    size = Size(w * 0.8f, baseH)
+                )
+
+                // Threaded metallic bolt shaft
+                val rodW = w * 0.24f
+                val rodLeft = (w - rodW) / 2f
+                val rodTop = h * 0.22f
+                val rodBottom = baseTop + baseH * 0.45f
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        listOf(Color(0xFF7B8798), Color(0xFFF8FAFC), Color(0xFF94A3B8), Color(0xFF64748B)),
+                        startX = rodLeft,
+                        endX = rodLeft + rodW
+                    ),
+                    topLeft = Offset(rodLeft, rodTop),
+                    size = Size(rodW, rodBottom - rodTop),
+                    cornerRadius = CornerRadius(rodW / 2f, rodW / 2f)
+                )
+                // Spiral screw threads along the shaft
+                val threadStep = 6.dp.toPx()
+                var ty = rodTop + rodW * 0.48f
+                while (ty < rodBottom - 4.dp.toPx()) {
+                    drawLine(
+                        color = Color(0xFF475569).copy(alpha = 0.55f),
+                        start = Offset(rodLeft + 1.5.dp.toPx(), ty + 2.2.dp.toPx()),
+                        end = Offset(rodLeft + rodW - 1.5.dp.toPx(), ty),
+                        strokeWidth = 1.6.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                    ty += threadStep
+                }
+                // Chrome dome highlight at bolt tip
+                drawOval(
+                    color = Color.White.copy(alpha = 0.72f),
+                    topLeft = Offset(rodLeft + rodW * 0.22f, rodTop + 2.dp.toPx()),
+                    size = Size(rodW * 0.35f, rodW * 0.28f)
+                )
+            } else {
+                // Glass test tube backdrop
+                val tubeLeft = w * 0.14f
+                val tubeW = w * 0.72f
+                val tubeTop = h * 0.22f
+                val tubeBottom = h - 8.dp.toPx()
+                val tubeH = tubeBottom - tubeTop
+                val radiusBottom = tubeW * 0.48f
+
+                // Soft glow under tube
+                drawOval(
+                    color = Color.Black.copy(alpha = 0.3f),
+                    topLeft = Offset(tubeLeft + 4.dp.toPx(), tubeBottom - 3.dp.toPx()),
+                    size = Size(tubeW - 8.dp.toPx(), 10.dp.toPx())
+                )
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.13f),
+                    topLeft = Offset(tubeLeft, tubeTop),
+                    size = Size(tubeW, tubeH),
+                    cornerRadius = CornerRadius(radiusBottom, radiusBottom)
+                )
+            }
+        }
+
+        // Stacked Nuts or Liquid Layers
+        val slotBottomPad = if (isBolts) height * 0.105f else 12.dp
+        val pieceHeight = if (isBolts) (height * 0.175f) else (height * 0.16f)
+        val pieceGap = if (isBolts) (-4).dp else 1.5.dp
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = slotBottomPad),
+            verticalArrangement = Arrangement.spacedBy(pieceGap, Alignment.Bottom),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            stack.reversed().forEachIndexed { posFromTop, cIdx ->
+                val isTopLifted = posFromTop == 0 && isSelected
+                val baseMod = Modifier.zIndex((6 - posFromTop).toFloat())
+                val mod = if (isTopLifted) {
+                    baseMod
+                        .offset(y = topLift)
+                        .graphicsLayer { scaleX = liftScale; scaleY = liftScale }
+                } else baseMod
+
+                val spec = NUT_SORT_SPECS[cIdx % NUT_SORT_SPECS.size]
+                if (isBolts) {
+                    HexNut3D(
+                        spec = spec,
+                        symbolIdx = cIdx % NUT_SORT_SPECS.size,
+                        showInnerHole = isTopLifted,
+                        isCompleted = isCompleted,
+                        modifier = mod
+                            .fillMaxWidth(0.84f)
+                            .height(pieceHeight)
+                    )
+                } else {
+                    LiquidSegment3D(
+                        spec = spec,
+                        isTop = posFromTop == 0,
+                        isBottom = posFromTop == stack.lastIndex,
+                        isLifted = isTopLifted,
+                        modifier = mod
+                            .fillMaxWidth(0.66f)
+                            .height(pieceHeight)
+                    )
+                }
+            }
+        }
+
+        // Foreground Glass Reflection & Flared Lip for WaterSort
+        if (!isBolts) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = this.size.width
+                val h = this.size.height
+                val tubeLeft = w * 0.14f
+                val tubeW = w * 0.72f
+                val tubeTop = h * 0.22f
+                val tubeBottom = h - 8.dp.toPx()
+                val tubeH = tubeBottom - tubeTop
+                val radiusBottom = tubeW * 0.48f
+
+                val outlineColor = when {
+                    hintGlowAlpha > 0f -> PlayBoxColors.BoltGold.copy(alpha = hintGlowAlpha)
+                    isCompleted -> Color(0xFF4ADE80)
+                    isSelected -> PlayBoxColors.BoltGold
+                    else -> Color.White.copy(alpha = 0.75f)
+                }
+                drawRoundRect(
+                    color = outlineColor,
+                    topLeft = Offset(tubeLeft, tubeTop),
+                    size = Size(tubeW, tubeH),
+                    cornerRadius = CornerRadius(radiusBottom, radiusBottom),
+                    style = Stroke(width = 2.4.dp.toPx())
+                )
+                // Flared glass rim lip
+                drawRoundRect(
+                    color = outlineColor,
+                    topLeft = Offset(tubeLeft - 4.dp.toPx(), tubeTop - 4.dp.toPx()),
+                    size = Size(tubeW + 8.dp.toPx(), 7.dp.toPx()),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx()),
+                    style = Stroke(width = 2.2.dp.toPx())
+                )
+                // Specular glass highlight stripe
+                drawLine(
+                    color = Color.White.copy(alpha = 0.36f),
+                    start = Offset(tubeLeft + tubeW * 0.18f, tubeTop + 10.dp.toPx()),
+                    end = Offset(tubeLeft + tubeW * 0.18f, tubeBottom - 16.dp.toPx()),
+                    strokeWidth = 3.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+        } else if (isCompleted) {
+            // Subtle bolt tip cap shimmer when a nut column finishes all 4!
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = height * 0.11f)
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF4ADE80))
+                    .border(1.5.dp, Color.White, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.Check, contentDescription = null, tint = Color(0xFF064E3B), modifier = Modifier.size(13.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun HexNut3D(
+    spec: SortColorSpec,
+    symbolIdx: Int,
+    showInnerHole: Boolean,
+    isCompleted: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = this.size.width
+        val h = this.size.height
+        val topBevelH = h * 0.34f
+        val bodyTop = topBevelH * 0.56f
+        val bodyBottom = h * 0.94f
+        val sideInset = w * 0.18f
+
+        // Drop shadow underneath nut
+        drawOval(
+            color = Color.Black.copy(alpha = 0.32f),
+            topLeft = Offset(w * 0.06f, h * 0.78f),
+            size = Size(w * 0.88f, h * 0.24f)
+        )
+
+        // Left angled hex facet
+        val leftPath = Path().apply {
+            moveTo(0f, topBevelH * 0.52f)
+            lineTo(sideInset, bodyTop + topBevelH * 0.42f)
+            lineTo(sideInset, bodyBottom)
+            lineTo(0f, bodyBottom - topBevelH * 0.36f)
+            close()
+        }
+        drawPath(leftPath, spec.leftSide)
+
+        // Right angled hex facet
+        val rightPath = Path().apply {
+            moveTo(w - sideInset, bodyTop + topBevelH * 0.42f)
+            lineTo(w, topBevelH * 0.52f)
+            lineTo(w, bodyBottom - topBevelH * 0.36f)
+            lineTo(w - sideInset, bodyBottom)
+            close()
+        }
+        drawPath(rightPath, spec.rightSide)
+
+        // Center front facet
+        val centerPath = Path().apply {
+            moveTo(sideInset, bodyTop + topBevelH * 0.42f)
+            lineTo(w - sideInset, bodyTop + topBevelH * 0.42f)
+            lineTo(w - sideInset, bodyBottom)
+            lineTo(sideInset, bodyBottom)
+            close()
+        }
+        drawPath(centerPath, spec.face)
+
+        // Top 3D hexagonal bevel lid
+        val topHex = Path().apply {
+            moveTo(sideInset, 0f)
+            lineTo(w - sideInset, 0f)
+            lineTo(w, topBevelH * 0.52f)
+            lineTo(w - sideInset, bodyTop + topBevelH * 0.42f)
+            lineTo(sideInset, bodyTop + topBevelH * 0.42f)
+            lineTo(0f, topBevelH * 0.52f)
+            close()
+        }
+        drawPath(
+            topHex,
+            brush = Brush.verticalGradient(listOf(spec.topBevel, spec.face))
+        )
+        drawPath(
+            topHex,
+            color = Color.White.copy(alpha = if (isCompleted) 0.55f else 0.28f),
+            style = Stroke(width = 1.dp.toPx(), join = StrokeJoin.Round)
+        )
+
+        // Inner threaded hole visible when lifted (or subtle bore around bolt rod)
+        val holeW = w * 0.34f
+        val holeH = topBevelH * 0.46f
+        val holeLeft = (w - holeW) / 2f
+        val holeTop = (bodyTop + topBevelH * 0.42f - holeH) * 0.46f
+        if (showInnerHole) {
+            drawOval(
+                color = Color(0xFF4B281B),
+                topLeft = Offset(holeLeft, holeTop),
+                size = Size(holeW, holeH)
+            )
+            drawOval(
+                color = Color(0xFFAD7D54),
+                topLeft = Offset(holeLeft + 1.5.dp.toPx(), holeTop + holeH * 0.28f),
+                size = Size(holeW - 3.dp.toPx(), holeH * 0.5f),
+                style = Stroke(width = 1.2.dp.toPx())
+            )
+        } else {
+            drawOval(
+                color = Color.Black.copy(alpha = 0.22f),
+                topLeft = Offset(holeLeft, holeTop),
+                size = Size(holeW, holeH)
+            )
+        }
+
+        // Embossed vector symbol on center front face for tactile crispness & colorblind clarity
+        val cx = w / 2f
+        val cy = (bodyTop + topBevelH * 0.42f + bodyBottom) / 2f
+        val r = (bodyBottom - (bodyTop + topBevelH * 0.42f)) * 0.32f
+        drawNutSymbol(symbolIdx, cx, cy, r, spec.symbolShade)
+    }
+}
+
+private fun DrawScope.drawNutSymbol(idx: Int, cx: Float, cy: Float, r: Float, color: Color) {
+    when (idx % 7) {
+        0 -> { // Crown
+            val p = Path().apply {
+                moveTo(cx - r, cy + r * 0.65f)
+                lineTo(cx - r * 1.15f, cy - r * 0.55f)
+                lineTo(cx - r * 0.45f, cy + r * 0.05f)
+                lineTo(cx, cy - r * 0.75f)
+                lineTo(cx + r * 0.45f, cy + r * 0.05f)
+                lineTo(cx + r * 1.15f, cy - r * 0.55f)
+                lineTo(cx + r, cy + r * 0.65f)
+                close()
+            }
+            drawPath(p, color)
+        }
+        1 -> { // Lightning bolt
+            val p = Path().apply {
+                moveTo(cx + r * 0.15f, cy - r * 0.95f)
+                lineTo(cx - r * 0.65f, cy + r * 0.08f)
+                lineTo(cx - r * 0.05f, cy + r * 0.08f)
+                lineTo(cx - r * 0.25f, cy + r * 0.95f)
+                lineTo(cx + r * 0.65f, cy - r * 0.12f)
+                lineTo(cx + r * 0.05f, cy - r * 0.12f)
+                close()
+            }
+            drawPath(p, color)
+        }
+        2 -> { // Heart
+            val p = Path().apply {
+                moveTo(cx, cy + r * 0.85f)
+                cubicTo(cx - r * 1.3f, cy + r * 0.1f, cx - r * 1.0f, cy - r * 0.95f, cx, cy - r * 0.28f)
+                cubicTo(cx + r * 1.0f, cy - r * 0.95f, cx + r * 1.3f, cy + r * 0.1f, cx, cy + r * 0.85f)
+                close()
+            }
+            drawPath(p, color)
+        }
+        3 -> { // Water drop
+            val p = Path().apply {
+                moveTo(cx, cy - r * 0.9f)
+                cubicTo(cx + r * 0.9f, cy, cx + r * 0.85f, cy + r * 0.9f, cx, cy + r * 0.9f)
+                cubicTo(cx - r * 0.85f, cy + r * 0.9f, cx - r * 0.9f, cy, cx, cy - r * 0.9f)
+                close()
+            }
+            drawPath(p, color)
+        }
+        4 -> { // Three-leaf clover
+            drawCircle(color, r * 0.44f, Offset(cx, cy - r * 0.4f))
+            drawCircle(color, r * 0.44f, Offset(cx - r * 0.45f, cy + r * 0.2f))
+            drawCircle(color, r * 0.44f, Offset(cx + r * 0.45f, cy + r * 0.2f))
+            drawLine(color, Offset(cx, cy + r * 0.2f), Offset(cx, cy + r * 0.9f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+        }
+        5 -> { // Sun
+            drawCircle(color, r * 0.5f, Offset(cx, cy))
+            for (a in 0 until 8) {
+                val rad = Math.toRadians(a * 45.0)
+                val sx = cx + (kotlin.math.cos(rad) * r * 0.68f).toFloat()
+                val sy = cy + (kotlin.math.sin(rad) * r * 0.68f).toFloat()
+                val ex = cx + (kotlin.math.cos(rad) * r * 1.0f).toFloat()
+                val ey = cy + (kotlin.math.sin(rad) * r * 1.0f).toFloat()
+                drawLine(color, Offset(sx, sy), Offset(ex, ey), strokeWidth = 1.7.dp.toPx(), cap = StrokeCap.Round)
+            }
+        }
+        else -> { // Diamond
+            val p = Path().apply {
+                moveTo(cx, cy - r * 0.9f)
+                lineTo(cx + r * 0.8f, cy)
+                lineTo(cx, cy + r * 0.9f)
+                lineTo(cx - r * 0.8f, cy)
+                close()
+            }
+            drawPath(p, color)
+        }
+    }
+}
+
+@Composable
+private fun LiquidSegment3D(
+    spec: SortColorSpec,
+    isTop: Boolean,
+    isBottom: Boolean,
+    isLifted: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = this.size.width
+        val h = this.size.height
+        val corner = if (isBottom) 14.dp.toPx() else 4.dp.toPx()
+        drawRoundRect(
+            brush = Brush.horizontalGradient(listOf(spec.leftSide, spec.face, spec.rightSide)),
+            topLeft = Offset.Zero,
+            size = Size(w, h),
+            cornerRadius = CornerRadius(corner, corner)
+        )
+        if (isTop) {
+            drawOval(
+                color = spec.topBevel.copy(alpha = if (isLifted) 0.95f else 0.72f),
+                topLeft = Offset(w * 0.08f, 1.dp.toPx()),
+                size = Size(w * 0.84f, h * 0.28f)
             )
         }
     }

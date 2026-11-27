@@ -2,25 +2,29 @@ package com.playbox.games.games
 
 import android.media.AudioManager
 import android.media.ToneGenerator
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,10 +39,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.playbox.games.data.PlayerPrefs
@@ -49,20 +58,26 @@ import com.playbox.games.network.OnlineClient
 import com.playbox.games.network.OnlineEvent
 import com.playbox.games.network.OnlineRoomState
 import com.playbox.games.ui.components.GameResultBanner
+import com.playbox.games.ui.components.PlayBoxButton
+import com.playbox.games.ui.components.PlayBoxOutlinedButton
 import com.playbox.games.ui.theme.PlayBoxColors
+import com.playbox.games.ui.theme.bounceClick
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
 
 // 28. HANGMAN
 private val HANGMAN_WORDS = listOf(
-    "КОСМОНАВТ", "БИБЛИОТЕКА", "ПРАВИТЕЛЬ", "КОМПЬЮТЕР", "ПРИКЛЮЧЕНИЕ",
-    "ШОКОЛАД", "ТЕЛЕФОН", "АВТОМОБИЛЬ", "ПРОГРАММА", "ДИНОЗАВР",
-    "ВЕРТОЛЕТ", "КРОКОДИЛ", "МАТЕМАТИКА", "УНИВЕРСИТЕТ", "МОРОЖЕНОЕ",
-    "ПАРАШЮТ", "АКВАРИУМ", "ПИРАМИДА", "СВЕТОФОР", "ПУТЕШЕСТВИЕ"
+    "КОСМОНАВТ", "БИБЛИОТЕКА", "КОМПЬЮТЕР", "ПРИКЛЮЧЕНИЕ", "ШОКОЛАД",
+    "ТЕЛЕФОН", "АВТОМОБИЛЬ", "ПРОГРАММА", "ДИНОЗАВР", "ВЕРТОЛЕТ",
+    "КРОКОДИЛ", "МАТЕМАТИКА", "МОРОЖЕНОЕ", "ПАРАШЮТ", "АКВАРИУМ",
+    "ПИРАМИДА", "СВЕТОФОР", "ПУТЕШЕСТВИЕ", "КАПИТАН", "ГАЛАКТИКА"
 )
 
 private val RU_ALPHA = listOf(
@@ -75,25 +90,15 @@ private val RU_ALPHA = listOf(
 fun HangmanScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     var seed by remember(resetSignal) { mutableIntStateOf(config.seed) }
     var customWordInput by remember(resetSignal) { mutableStateOf("") }
-    var secretWord by remember(seed) {
-        mutableStateOf(if (config.mode == PlayMode.LOCAL_2P) "" else HANGMAN_WORDS[abs(seed) % HANGMAN_WORDS.size])
-    }
+    var secretWord by remember(seed) { mutableStateOf(if (config.mode == PlayMode.LOCAL_2P) "" else HANGMAN_WORDS[abs(seed) % HANGMAN_WORDS.size]) }
     var guessed by remember(seed, secretWord) { mutableStateOf(emptySet<Char>()) }
     val wrongCount = guessed.count { it !in secretWord }
     val won = secretWord.isNotEmpty() && secretWord.all { it in guessed }
     val lost = secretWord.isNotEmpty() && wrongCount >= 6
 
-    LaunchedEffect(won) {
-        if (won) {
-            prefs.recordWin(GameId.HANGMAN)
-            if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex)
-        }
-    }
-
+    LaunchedEffect(won) { if (won) { prefs.recordWin(GameId.HANGMAN); if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex) } }
     LaunchedEffect(config.mode) {
-        if (config.mode == PlayMode.ONLINE) {
-            onlineClient.events.collect { if (it is OnlineEvent.RematchStart) seed = it.seed }
-        }
+        if (config.mode == PlayMode.ONLINE) onlineClient.events.collect { if (it is OnlineEvent.RematchStart) seed = it.seed }
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFFF6A570)).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -108,34 +113,30 @@ fun HangmanScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Online
                 singleLine = true
             )
             Spacer(Modifier.height(12.dp))
-            Button(enabled = customWordInput.length >= 3, onClick = { secretWord = customWordInput; customWordInput = "" }) {
-                Text("Загадать и передать телефон")
+            PlayBoxButton(enabled = customWordInput.length >= 3, onClick = { secretWord = customWordInput; customWordInput = "" }) {
+                Text("Загадать и передать телефон", fontWeight = FontWeight.Bold, maxLines = 1)
             }
             Spacer(Modifier.weight(1f))
         } else {
             ScorePill("Ошибки", wrongCount, Color(0xFFD62828), true)
             Spacer(Modifier.height(10.dp))
             Canvas(Modifier.size(160.dp)) {
-                val stroke = 5.dp.toPx()
-                val gallows = Color(0xFFD62828)
-                val body = Color(0xFF3A1F0D)
-                drawLine(gallows, Offset(20f, size.height - 10f), Offset(size.width * 0.7f, size.height - 10f), stroke)
-                drawLine(gallows, Offset(size.width * 0.25f, size.height - 10f), Offset(size.width * 0.25f, 16f), stroke)
-                drawLine(gallows, Offset(size.width * 0.25f, 16f), Offset(size.width * 0.65f, 16f), stroke)
-                drawLine(gallows, Offset(size.width * 0.65f, 16f), Offset(size.width * 0.65f, size.height * 0.24f), stroke)
+                val stroke = 5.dp.toPx(); val gallows = Color(0xFFD62828); val body = Color(0xFF3A1F0D)
+                drawLine(gallows, Offset(20f, size.height - 10f), Offset(size.width * 0.7f, size.height - 10f), stroke, StrokeCap.Round)
+                drawLine(gallows, Offset(size.width * 0.25f, size.height - 10f), Offset(size.width * 0.25f, 16f), stroke, StrokeCap.Round)
+                drawLine(gallows, Offset(size.width * 0.25f, 16f), Offset(size.width * 0.65f, 16f), stroke, StrokeCap.Round)
+                drawLine(gallows, Offset(size.width * 0.65f, 16f), Offset(size.width * 0.65f, size.height * 0.24f), stroke, StrokeCap.Round)
                 if (wrongCount >= 1) drawCircle(body, 22f, Offset(size.width * 0.65f, size.height * 0.34f), style = Stroke(stroke))
-                if (wrongCount >= 2) drawLine(body, Offset(size.width * 0.65f, size.height * 0.44f), Offset(size.width * 0.65f, size.height * 0.68f), stroke)
-                if (wrongCount >= 3) drawLine(body, Offset(size.width * 0.65f, size.height * 0.50f), Offset(size.width * 0.50f, size.height * 0.60f), stroke)
-                if (wrongCount >= 4) drawLine(body, Offset(size.width * 0.65f, size.height * 0.50f), Offset(size.width * 0.80f, size.height * 0.60f), stroke)
-                if (wrongCount >= 5) drawLine(body, Offset(size.width * 0.65f, size.height * 0.68f), Offset(size.width * 0.52f, size.height * 0.85f), stroke)
-                if (wrongCount >= 6) drawLine(body, Offset(size.width * 0.65f, size.height * 0.68f), Offset(size.width * 0.78f, size.height * 0.85f), stroke)
+                if (wrongCount >= 2) drawLine(body, Offset(size.width * 0.65f, size.height * 0.44f), Offset(size.width * 0.65f, size.height * 0.68f), stroke, StrokeCap.Round)
+                if (wrongCount >= 3) drawLine(body, Offset(size.width * 0.65f, size.height * 0.50f), Offset(size.width * 0.50f, size.height * 0.60f), stroke, StrokeCap.Round)
+                if (wrongCount >= 4) drawLine(body, Offset(size.width * 0.65f, size.height * 0.50f), Offset(size.width * 0.80f, size.height * 0.60f), stroke, StrokeCap.Round)
+                if (wrongCount >= 5) drawLine(body, Offset(size.width * 0.65f, size.height * 0.68f), Offset(size.width * 0.52f, size.height * 0.85f), stroke, StrokeCap.Round)
+                if (wrongCount >= 6) drawLine(body, Offset(size.width * 0.65f, size.height * 0.68f), Offset(size.width * 0.78f, size.height * 0.85f), stroke, StrokeCap.Round)
             }
             Spacer(Modifier.height(10.dp))
             Text(
                 text = secretWord.map { if (it in guessed || lost) it else '_' }.joinToString(" "),
-                fontSize = 26.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = PlayBoxColors.DarkInk
+                fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = PlayBoxColors.DarkInk
             )
             Spacer(Modifier.weight(1f))
             if (won || lost) {
@@ -156,14 +157,13 @@ fun HangmanScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Online
                     RU_ALPHA.forEach { row ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             row.forEach { l ->
-                                val ch = l[0]
-                                val used = ch in guessed
+                                val ch = l[0]; val used = ch in guessed
                                 Box(
-                                    Modifier.weight(1f).height(42.dp).clip(RoundedCornerShape(8.dp))
+                                    Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp))
                                         .background(when { !used -> Color.White; ch in secretWord -> Color(0xFF40916C); else -> Color(0xFF6B7280) })
-                                        .clickable(enabled = !used) { guessed = guessed + ch },
+                                        .bounceClick(enabled = !used) { guessed = guessed + ch },
                                     contentAlignment = Alignment.Center
-                                ) { Text(l, fontWeight = FontWeight.ExtraBold, color = if (used) Color.White else PlayBoxColors.DarkInk) }
+                                ) { Text(l, fontWeight = FontWeight.ExtraBold, color = if (used) Color.White else PlayBoxColors.DarkInk, maxLines = 1) }
                             }
                         }
                     }
@@ -173,27 +173,51 @@ fun HangmanScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Online
     }
 }
 
-// 29. WORD SEARCH WHEEL (Letter Wheel Word Connect)
+// 29. WORD SEARCH WHEEL (Exact circular IntOffset + glowing connector lines + drag-to-connect!)
 private data class WheelLevel(val letters: List<Char>, val targets: List<String>)
 
 private val WHEEL_LEVELS = listOf(
     WheelLevel(listOf('С', 'Т', 'О', 'Л', 'А'), listOf("СТОЛ", "СОТ", "ЛАТ", "ТОЛ", "СТАЛ")),
     WheelLevel(listOf('К', 'О', 'Р', 'А', 'Б'), listOf("КОРА", "РОК", "РАК", "БАК", "БРАК")),
-    WheelLevel(listOf('М', 'О', 'Р', 'Е', 'К'), listOf("МОРЕ", "РОМ", "КОМ", "КРЕМ", "МОРК"))
+    WheelLevel(listOf('М', 'О', 'Р', 'Е', 'К'), listOf("МОРЕ", "РОМ", "КОМ", "КРЕМ", "МОРК")),
+    WheelLevel(listOf('П', 'А', 'Р', 'У', 'С'), listOf("ПАРУС", "ПАР", "СУП", "САП", "УПАС"))
 )
 
 @Composable
 fun WordSearchWheelScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
+    val density = LocalDensity.current
     var lvl by remember(resetSignal) { mutableIntStateOf(abs(config.seed) % WHEEL_LEVELS.size) }
     val puz = WHEEL_LEVELS[lvl % WHEEL_LEVELS.size]
     var found by remember(lvl, resetSignal) { mutableStateOf(emptySet<String>()) }
     var pickedIndices by remember(lvl, resetSignal) { mutableStateOf<List<Int>>(emptyList()) }
-    var msg by remember(lvl, resetSignal) { mutableStateOf("Собирайте слова нажимая буквы в колесе") }
+    var msg by remember(lvl, resetSignal) { mutableStateOf("Проведите по буквам в колесе") }
 
     val currentWord = pickedIndices.map { puz.letters[it] }.joinToString("")
     val won = found.size == puz.targets.size
 
     LaunchedEffect(won) { if (won) prefs.recordWin(GameId.WORD_SEARCH) }
+
+    fun submitPicked() {
+        if (currentWord in puz.targets && currentWord !in found) {
+            found = found + currentWord
+            msg = "Слово $currentWord найдено!"
+        } else if (pickedIndices.size >= 2) {
+            msg = if (currentWord in found) "Уже найдено!" else "Нет такого слова"
+        }
+        pickedIndices = emptyList()
+    }
+
+    val wheelDiameterDp = 224.dp
+    val radiusPx = with(density) { 74.dp.toPx() }
+    val centerPx = with(density) { (wheelDiameterDp / 2).toPx() }
+    val nodeRadiusPx = with(density) { 27.dp.toPx() }
+
+    val nodeCenters = remember(puz) {
+        puz.letters.indices.map { idx ->
+            val angle = (idx * 2.0 * Math.PI / puz.letters.size) - Math.PI / 2
+            Offset(centerPx + (radiusPx * cos(angle)).toFloat(), centerPx + (radiusPx * sin(angle)).toFloat())
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF7B5780)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         ScorePill("Найдено слов", found.size, PlayBoxColors.BoltGold, true)
@@ -204,28 +228,48 @@ fun WordSearchWheelScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient
                 Box(
                     Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (ok) Color(0xFF40916C) else Color(0xFF5D3F61)).padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center
-                ) {
-                    Text(if (ok) w else "•".repeat(w.length), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-                }
+                ) { Text(if (ok) w else "•".repeat(w.length), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1) }
             }
         }
         Spacer(Modifier.height(14.dp))
         Text(if (currentWord.isEmpty()) msg else currentWord, color = PlayBoxColors.BoltGold, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
         Spacer(Modifier.weight(1f))
 
-        // Letter Wheel
-        Box(Modifier.size(220.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(wheelDiameterDp).clip(CircleShape).background(Color.White.copy(alpha = 0.16f))
+                .pointerInput(puz, won, found) {
+                    detectDragGestures(
+                        onDragStart = { pos ->
+                            if (won) return@detectDragGestures
+                            val hit = nodeCenters.indexOfFirst { hypot(it.x - pos.x, it.y - pos.y) <= nodeRadiusPx * 1.15f }
+                            pickedIndices = if (hit >= 0) listOf(hit) else emptyList()
+                        },
+                        onDrag = { ch, _ ->
+                            ch.consume()
+                            val pos = ch.position
+                            val hit = nodeCenters.indexOfFirst { hypot(it.x - pos.x, it.y - pos.y) <= nodeRadiusPx * 1.15f }
+                            if (hit >= 0 && hit !in pickedIndices) pickedIndices = pickedIndices + hit
+                        },
+                        onDragEnd = { submitPicked() },
+                        onDragCancel = { pickedIndices = emptyList() }
+                    )
+                }
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                for (i in 0 until pickedIndices.lastIndex) {
+                    drawLine(PlayBoxColors.BoltGold, nodeCenters[pickedIndices[i]], nodeCenters[pickedIndices[i + 1]], strokeWidth = 7.dp.toPx(), cap = StrokeCap.Round)
+                }
+            }
             puz.letters.forEachIndexed { idx, ch ->
-                val angle = (idx * 2.0 * Math.PI / puz.letters.size) - Math.PI / 2
-                val dx = (72 * cos(angle)).dp
-                val dy = (72 * sin(angle)).dp
+                val c = nodeCenters[idx]
                 val sel = idx in pickedIndices
                 Box(
                     Modifier
-                        .padding(start = if (dx > 0.dp) dx * 2 else 0.dp, end = if (dx < 0.dp) (-dx) * 2 else 0.dp, top = if (dy > 0.dp) dy * 2 else 0.dp, bottom = if (dy < 0.dp) (-dy) * 2 else 0.dp)
+                        .offset { IntOffset((c.x - nodeRadiusPx).roundToInt(), (c.y - nodeRadiusPx).roundToInt()) }
                         .size(54.dp)
                         .clip(CircleShape)
                         .background(if (sel) PlayBoxColors.BoltGold else Color.White)
+                        .border(2.dp, Color(0xFF5D3F61), CircleShape)
                         .clickable(enabled = !won && !sel) { pickedIndices = pickedIndices + idx },
                     contentAlignment = Alignment.Center
                 ) { Text("$ch", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = PlayBoxColors.DarkInk) }
@@ -233,32 +277,26 @@ fun WordSearchWheelScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient
         }
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = { pickedIndices = emptyList() }) { Text("Сброс", color = Color.White) }
-            Button(enabled = pickedIndices.size >= 2, onClick = {
-                if (currentWord in puz.targets && currentWord !in found) {
-                    found = found + currentWord
-                    msg = "Слово $currentWord найдено!"
-                } else {
-                    msg = "Нет такого слова"
-                }
-                pickedIndices = emptyList()
-            }) { Text("Проверить") }
+            PlayBoxOutlinedButton(onClick = { pickedIndices = emptyList() }, contentColor = Color.White) { Text("Сброс", fontWeight = FontWeight.Bold, maxLines = 1) }
+            PlayBoxButton(enabled = pickedIndices.size >= 2, onClick = { submitPicked() }, containerColor = PlayBoxColors.BoltGold, contentColor = PlayBoxColors.DarkInk) {
+                Text("Проверить", fontWeight = FontWeight.ExtraBold, maxLines = 1)
+            }
         }
         Spacer(Modifier.weight(1f))
-        if (won) {
-            GameResultBanner("Все слова найдены!", "Отличный словарный запас", config.mode, roomState, onRematch = { lvl += 1 }, onExit = onExit)
-        }
+        if (won) GameResultBanner("Все слова найдены!", "Отличный словарный запас", config.mode, roomState, onRematch = { lvl += 1 }, onExit = onExit)
     }
 }
 
-// 30. SOUND MEMORY (Simon Says with real audio tones!)
+// 30. SOUND MEMORY (Authentic Radial 4-Quadrant Simon Ring!)
 @Composable
 fun SoundMemoryScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     val toneGen = remember { runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 75) }.getOrNull() }
     DisposableEffect(Unit) { onDispose { runCatching { toneGen?.release() } } }
 
     val toneCodes = listOf(ToneGenerator.TONE_DTMF_1, ToneGenerator.TONE_DTMF_4, ToneGenerator.TONE_DTMF_7, ToneGenerator.TONE_DTMF_9)
+    // Quadrant order clockwise from top-left: 0=TopLeft(Blue), 1=TopRight(Green), 2=BottomRight(Red), 3=BottomLeft(Yellow)
     val quadColors = listOf(Color(0xFF38BDF8), Color(0xFF70E000), Color(0xFFEF476F), Color(0xFFFFCA3A))
+    val startAngles = listOf(180f, 270f, 0f, 90f)
 
     var sequence by remember(resetSignal) { mutableStateOf(listOf(Random.nextInt(4))) }
     var userStep by remember(resetSignal) { mutableIntStateOf(0) }
@@ -266,61 +304,64 @@ fun SoundMemoryScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
     var playingBack by remember(resetSignal) { mutableStateOf(true) }
     var lost by remember(resetSignal) { mutableStateOf(false) }
 
-    fun beep(idx: Int) {
-        runCatching { toneGen?.startTone(toneCodes[idx], 240) }
-    }
+    fun beep(idx: Int) { runCatching { toneGen?.startTone(toneCodes[idx], 240) } }
 
     LaunchedEffect(sequence, resetSignal) {
         if (!lost) {
-            playingBack = true
-            delay(350)
-            for (q in sequence) {
-                litIdx = q
-                beep(q)
-                delay(380)
-                litIdx = -1
-                delay(180)
-            }
-            playingBack = false
-            userStep = 0
+            playingBack = true; delay(350)
+            for (q in sequence) { litIdx = q; beep(q); delay(380); litIdx = -1; delay(180) }
+            playingBack = false; userStep = 0
         }
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF2E4D63)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         ScorePill("Раунд", sequence.size, PlayBoxColors.BoltGold, true)
         Spacer(Modifier.height(10.dp))
-        Text(if (playingBack) "Слушайте и запоминайте..." else "Ваш черёд! Повторите последовательность", color = Color.White, fontWeight = FontWeight.Bold)
+        Text(if (playingBack) "Слушайте и запоминайте..." else "Ваш черёд! Нажмите сектора по порядку", color = Color.White, fontWeight = FontWeight.Bold)
         Spacer(Modifier.weight(1f))
 
-        Column(Modifier.size(270.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            for (r in 0..1) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    for (c in 0..1) {
-                        val idx = r * 2 + c
-                        val isLit = litIdx == idx
-                        Box(
-                            Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(28.dp))
-                                .background(if (isLit) Color.White else quadColors[idx])
-                                .border(4.dp, Color(0xFF1E293B), RoundedCornerShape(28.dp))
-                                .clickable(enabled = !playingBack && !lost) {
-                                    beep(idx)
-                                    if (sequence[userStep] == idx) {
-                                        if (userStep + 1 == sequence.size) {
-                                            prefs.updateBestScore(GameId.SOUND_MEMORY, sequence.size)
-                                            if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("score", sequence.size))
-                                            sequence = sequence + Random.nextInt(4)
-                                        } else {
-                                            userStep += 1
-                                        }
-                                    } else {
-                                        lost = true
-                                    }
-                                }
-                        )
+        Canvas(
+            Modifier.size(280.dp).pointerInput(playingBack, lost, sequence, userStep) {
+                detectTapGestures { pos ->
+                    if (playingBack || lost) return@detectTapGestures
+                    val dx = pos.x - size.width / 2f; val dy = pos.y - size.height / 2f
+                    val dist = hypot(dx, dy)
+                    if (dist < size.width * 0.17f || dist > size.width * 0.5f) return@detectTapGestures
+                    val deg = ((Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())) + 360.0) % 360.0)
+                    val q = when {
+                        deg in 180.0..270.0 -> 0
+                        deg in 270.0..360.0 -> 1
+                        deg in 0.0..90.0 -> 2
+                        else -> 3
                     }
+                    beep(q)
+                    if (sequence[userStep] == q) {
+                        if (userStep + 1 == sequence.size) {
+                            prefs.updateBestScore(GameId.SOUND_MEMORY, sequence.size)
+                            if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("score", sequence.size))
+                            sequence = sequence + Random.nextInt(4)
+                        } else userStep += 1
+                    } else lost = true
                 }
             }
+        ) {
+            val r = size.minDimension * 0.46f
+            drawCircle(Color(0xFF1E293B), r + 6.dp.toPx(), center)
+            for (i in 0..3) {
+                val lit = litIdx == i
+                drawArc(
+                    color = if (lit) Color.White else quadColors[i],
+                    startAngle = startAngles[i] + 3f,
+                    sweepAngle = 84f,
+                    useCenter = true,
+                    topLeft = Offset(center.x - r, center.y - r),
+                    size = Size(2 * r, 2 * r)
+                )
+            }
+            drawCircle(Color(0xFF1E293B), r * 0.36f, center)
+            drawCircle(Color(0xFF2E4D63), r * 0.28f, center)
         }
+
         Spacer(Modifier.weight(1f))
         if (lost) {
             GameResultBanner("Ошибка!", "Достигнут раунд ${sequence.size}", config.mode, roomState,
@@ -331,7 +372,7 @@ fun SoundMemoryScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
     }
 }
 
-// 31. MEMORY CARDS (Pairs matching — Solo, 2P Local, Online)
+// 31. MEMORY CARDS (With 3D card flip animation!)
 private val MEMORY_ICONS = listOf("🌸", "🦊", "🍉", "🚀", "💎", "🎵", "⚡", "👑")
 
 @Composable
@@ -347,16 +388,11 @@ fun MemoryCardsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
 
     val won = matched.all { it }
 
-    fun flipCard(idx: Int, player: Int, fromRemote: Boolean) {
+    fun flipCard(idx: Int, fromRemote: Boolean) {
         if (locked || matched[idx] || idx in flipped) return
-        val nf = flipped + idx
-        flipped = nf
-        if (config.mode == PlayMode.ONLINE && !fromRemote) {
-            onlineClient.sendMove(JSONObject().put("idx", idx))
-        }
-        if (nf.size == 2) {
-            locked = true
-        }
+        val nf = flipped + idx; flipped = nf
+        if (config.mode == PlayMode.ONLINE && !fromRemote) onlineClient.sendMove(JSONObject().put("idx", idx))
+        if (nf.size == 2) locked = true
     }
 
     LaunchedEffect(flipped) {
@@ -371,11 +407,8 @@ fun MemoryCardsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
                     if (config.mode != PlayMode.ONLINE && w == 1) prefs.recordWin(GameId.MEMORY_CARDS)
                     if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(w)
                 }
-            } else if (config.mode != PlayMode.SOLO) {
-                turn = if (turn == 1) 2 else 1
-            }
-            flipped = emptyList()
-            locked = false
+            } else if (config.mode != PlayMode.SOLO) turn = if (turn == 1) 2 else 1
+            flipped = emptyList(); locked = false
         }
     }
 
@@ -383,7 +416,7 @@ fun MemoryCardsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
         if (config.mode == PlayMode.ONLINE) {
             onlineClient.events.collect { ev ->
                 when (ev) {
-                    is OnlineEvent.OpponentMove -> flipCard(ev.payload.optInt("idx"), ev.playerIndex, true)
+                    is OnlineEvent.OpponentMove -> flipCard(ev.payload.optInt("idx"), true)
                     is OnlineEvent.RematchStart -> seed = ev.seed
                     else -> Unit
                 }
@@ -405,14 +438,19 @@ fun MemoryCardsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
                     for (c in 0..3) {
                         val idx = r * 4 + c
                         val open = matched[idx] || idx in flipped
+                        val rot by animateFloatAsState(if (open) 180f else 0f, tween(260), label = "flip_$idx")
+                        val showFront = rot > 90f
                         Box(
-                            Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(14.dp))
-                                .background(if (open) Color.White else Color(0xFFFFCA3A))
+                            Modifier.weight(1f).fillMaxSize()
+                                .graphicsLayer { rotationY = rot; cameraDistance = 12f * density }
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (showFront) Color.White else Color(0xFFFFCA3A))
                                 .border(3.dp, Color.White, RoundedCornerShape(14.dp))
-                                .clickable(enabled = canTap && !open) { flipCard(idx, turn, false) },
+                                .clickable(enabled = canTap && !open) { flipCard(idx, false) },
                             contentAlignment = Alignment.Center
                         ) {
-                            if (open) Text(cards[idx], fontSize = 30.sp) else Text("?", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                            if (showFront) Text(cards[idx], fontSize = 30.sp, modifier = Modifier.graphicsLayer { rotationY = 180f })
+                            else Text("?", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                         }
                     }
                 }

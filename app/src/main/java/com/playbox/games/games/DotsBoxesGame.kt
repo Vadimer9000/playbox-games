@@ -1,5 +1,9 @@
 package com.playbox.games.games
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -51,7 +56,7 @@ import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.random.Random
 
-private const val DB_DOTS = 5 // 5x5 dots = 4x4 boxes
+private const val DB_DOTS = 5
 private const val DB_BOXES = DB_DOTS - 1
 
 @Composable
@@ -64,12 +69,12 @@ fun DotsBoxesScreen(
     onExit: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
-    // hEdges: 5 rows x 4 cols; vEdges: 4 rows x 5 cols; boxes: 4x4
     var hEdges by remember(resetSignal) { mutableStateOf(IntArray(DB_DOTS * DB_BOXES)) }
     var vEdges by remember(resetSignal) { mutableStateOf(IntArray(DB_BOXES * DB_DOTS)) }
     var boxes by remember(resetSignal) { mutableStateOf(IntArray(DB_BOXES * DB_BOXES)) }
     var currentPlayer by remember(resetSignal) { mutableIntStateOf(config.startingPlayer) }
     var winner by remember(resetSignal) { mutableStateOf<Int?>(null) }
+    var lastEdgeKey by remember(resetSignal) { mutableStateOf("") }
 
     fun reset(starter: Int = 1) {
         hEdges = IntArray(DB_DOTS * DB_BOXES)
@@ -77,6 +82,7 @@ fun DotsBoxesScreen(
         boxes = IntArray(DB_BOXES * DB_BOXES)
         currentPlayer = starter
         winner = null
+        lastEdgeKey = ""
     }
 
     fun placeEdge(isHorizontal: Boolean, r: Int, c: Int, player: Int, fromRemote: Boolean) {
@@ -87,10 +93,12 @@ fun DotsBoxesScreen(
             val idx = r * DB_BOXES + c
             if (r !in 0 until DB_DOTS || c !in 0 until DB_BOXES || nextH[idx] != 0) return
             nextH[idx] = player
+            lastEdgeKey = "h_${r}_$c"
         } else {
             val idx = r * DB_DOTS + c
             if (r !in 0 until DB_BOXES || c !in 0 until DB_DOTS || nextV[idx] != 0) return
             nextV[idx] = player
+            lastEdgeKey = "v_${r}_$c"
         }
 
         val nextBoxes = boxes.copyOf()
@@ -111,9 +119,7 @@ fun DotsBoxesScreen(
             }
         }
 
-        hEdges = nextH
-        vEdges = nextV
-        boxes = nextBoxes
+        hEdges = nextH; vEdges = nextV; boxes = nextBoxes
         if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
         if (config.mode == PlayMode.ONLINE && !fromRemote) {
@@ -121,13 +127,8 @@ fun DotsBoxesScreen(
         }
 
         if (nextBoxes.none { it == 0 }) {
-            val p1 = nextBoxes.count { it == 1 }
-            val p2 = nextBoxes.count { it == 2 }
-            val w = when {
-                p1 > p2 -> 1
-                p2 > p1 -> 2
-                else -> 0
-            }
+            val p1 = nextBoxes.count { it == 1 }; val p2 = nextBoxes.count { it == 2 }
+            val w = when { p1 > p2 -> 1; p2 > p1 -> 2; else -> 0 }
             winner = w
             if (config.mode != PlayMode.ONLINE && w == 1) prefs.recordWin(GameId.DOTS_BOXES)
             if (config.mode == PlayMode.ONLINE && !fromRemote) {
@@ -143,15 +144,7 @@ fun DotsBoxesScreen(
         if (config.mode == PlayMode.ONLINE) {
             onlineClient.events.collect { event ->
                 when (event) {
-                    is OnlineEvent.OpponentMove -> {
-                        placeEdge(
-                            isHorizontal = event.payload.optBoolean("h"),
-                            r = event.payload.optInt("r"),
-                            c = event.payload.optInt("c"),
-                            player = event.playerIndex,
-                            fromRemote = true
-                        )
-                    }
+                    is OnlineEvent.OpponentMove -> placeEdge(event.payload.optBoolean("h"), event.payload.optInt("r"), event.payload.optInt("c"), event.playerIndex, true)
                     is OnlineEvent.RematchStart -> reset(event.startingPlayer)
                     else -> Unit
                 }
@@ -162,31 +155,19 @@ fun DotsBoxesScreen(
     LaunchedEffect(currentPlayer, winner, hEdges, vEdges) {
         if (config.mode == PlayMode.SOLO && currentPlayer == 2 && winner == null) {
             delay(360)
-            val move = chooseDotsBoxesMove(hEdges, vEdges, config.difficulty)
-            if (move != null) {
-                placeEdge(move.first, move.second, move.third, 2, fromRemote = false)
-            }
+            chooseDotsBoxesMove(hEdges, vEdges, config.difficulty)?.let { placeEdge(it.first, it.second, it.third, 2, false) }
         }
     }
 
-    val p1Count = boxes.count { it == 1 }
-    val p2Count = boxes.count { it == 2 }
+    val p1Count = boxes.count { it == 1 }; val p2Count = boxes.count { it == 2 }
     val canTap = when (config.mode) {
         PlayMode.SOLO -> currentPlayer == 1 && winner == null
         PlayMode.LOCAL_2P -> winner == null
         PlayMode.ONLINE -> currentPlayer == config.playerIndex && winner == null && (roomState?.bothConnected == true)
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
+    Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             ScorePill("Игрок 1", p1Count, PlayBoxColors.Player1Color, currentPlayer == 1 && winner == null)
             ScorePill(if (config.mode == PlayMode.SOLO) "Бот" else "Игрок 2", p2Count, PlayBoxColors.Player2Color, currentPlayer == 2 && winner == null)
         }
@@ -199,39 +180,27 @@ fun DotsBoxesScreen(
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(24.dp))
                 .background(Color.White)
-                .border(3.dp, PlayBoxColors.DarkInk, RoundedCornerShape(24.dp))
+                .border(4.dp, PlayBoxColors.DarkInk, RoundedCornerShape(24.dp))
                 .padding(24.dp)
                 .pointerInput(canTap, hEdges, vEdges) {
                     detectTapGestures { pos ->
                         if (!canTap) return@detectTapGestures
-                        val stepX = size.width / DB_BOXES
-                        val stepY = size.height / DB_BOXES
-                        val colFloat = pos.x / stepX
-                        val rowFloat = pos.y / stepY
-
+                        val stepX = size.width / DB_BOXES; val stepY = size.height / DB_BOXES
+                        val colFloat = pos.x / stepX; val rowFloat = pos.y / stepY
                         var bestDist = Float.MAX_VALUE
                         var bestMove: Triple<Boolean, Int, Int>? = null
-
-                        // Check horizontal edges
-                        for (r in 0 until DB_DOTS) {
-                            for (c in 0 until DB_BOXES) {
-                                if (hEdges[r * DB_BOXES + c] != 0) continue
-                                val dist = abs(rowFloat - r) + abs(colFloat - (c + 0.5f)) * 0.45f
-                                if (abs(rowFloat - r) < 0.38f && colFloat in (c.toFloat() - 0.1f)..(c + 1.1f) && dist < bestDist) {
-                                    bestDist = dist
-                                    bestMove = Triple(true, r, c)
-                                }
+                        for (r in 0 until DB_DOTS) for (c in 0 until DB_BOXES) {
+                            if (hEdges[r * DB_BOXES + c] != 0) continue
+                            val dist = abs(rowFloat - r) + abs(colFloat - (c + 0.5f)) * 0.45f
+                            if (abs(rowFloat - r) < 0.38f && colFloat in (c.toFloat() - 0.1f)..(c + 1.1f) && dist < bestDist) {
+                                bestDist = dist; bestMove = Triple(true, r, c)
                             }
                         }
-                        // Check vertical edges
-                        for (r in 0 until DB_BOXES) {
-                            for (c in 0 until DB_DOTS) {
-                                if (vEdges[r * DB_DOTS + c] != 0) continue
-                                val dist = abs(colFloat - c) + abs(rowFloat - (r + 0.5f)) * 0.45f
-                                if (abs(colFloat - c) < 0.38f && rowFloat in (r.toFloat() - 0.1f)..(r + 1.1f) && dist < bestDist) {
-                                    bestDist = dist
-                                    bestMove = Triple(false, r, c)
-                                }
+                        for (r in 0 until DB_BOXES) for (c in 0 until DB_DOTS) {
+                            if (vEdges[r * DB_DOTS + c] != 0) continue
+                            val dist = abs(colFloat - c) + abs(rowFloat - (r + 0.5f)) * 0.45f
+                            if (abs(colFloat - c) < 0.38f && rowFloat in (r.toFloat() - 0.1f)..(r + 1.1f) && dist < bestDist) {
+                                bestDist = dist; bestMove = Triple(false, r, c)
                             }
                         }
                         bestMove?.let { placeEdge(it.first, it.second, it.third, currentPlayer, false) }
@@ -239,56 +208,29 @@ fun DotsBoxesScreen(
                 }
         ) {
             val step = size.minDimension / DB_BOXES
-            // Boxes
-            for (r in 0 until DB_BOXES) {
-                for (c in 0 until DB_BOXES) {
-                    val owner = boxes[r * DB_BOXES + c]
-                    if (owner != 0) {
-                        val color = if (owner == 1) PlayBoxColors.Player1Color.copy(alpha = 0.28f) else PlayBoxColors.Player2Color.copy(alpha = 0.28f)
-                        drawRect(color, Offset(c * step + 4.dp.toPx(), r * step + 4.dp.toPx()), Size(step - 8.dp.toPx(), step - 8.dp.toPx()))
-                    }
+            for (r in 0 until DB_BOXES) for (c in 0 until DB_BOXES) {
+                val owner = boxes[r * DB_BOXES + c]
+                if (owner != 0) {
+                    val color = if (owner == 1) PlayBoxColors.Player1Color.copy(alpha = 0.30f) else PlayBoxColors.Player2Color.copy(alpha = 0.30f)
+                    drawRoundRect(color, Offset(c * step + 6.dp.toPx(), r * step + 6.dp.toPx()), Size(step - 12.dp.toPx(), step - 12.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(8.dp.toPx()))
                 }
             }
-            // Guide grid & placed edges
-            for (r in 0 until DB_DOTS) {
-                for (c in 0 until DB_BOXES) {
-                    val owner = hEdges[r * DB_BOXES + c]
-                    val col = when (owner) {
-                        1 -> PlayBoxColors.Player1Color
-                        2 -> PlayBoxColors.Player2Color
-                        else -> Color(0xFFE5E7EB)
-                    }
-                    drawLine(
-                        col,
-                        Offset(c * step, r * step),
-                        Offset((c + 1) * step, r * step),
-                        strokeWidth = (if (owner == 0) 3.dp else 7.dp).toPx(),
-                        cap = StrokeCap.Round
-                    )
-                }
+            for (r in 0 until DB_DOTS) for (c in 0 until DB_BOXES) {
+                val owner = hEdges[r * DB_BOXES + c]
+                val isLast = lastEdgeKey == "h_${r}_$c"
+                val col = when (owner) { 1 -> PlayBoxColors.Player1Color; 2 -> PlayBoxColors.Player2Color; else -> Color(0xFFE5E7EB) }
+                if (isLast) drawLine(PlayBoxColors.BoltGold, Offset(c * step, r * step), Offset((c + 1) * step, r * step), strokeWidth = 11.dp.toPx(), cap = StrokeCap.Round)
+                drawLine(col, Offset(c * step, r * step), Offset((c + 1) * step, r * step), strokeWidth = (if (owner == 0) 3.dp else 7.dp).toPx(), cap = StrokeCap.Round)
             }
-            for (r in 0 until DB_BOXES) {
-                for (c in 0 until DB_DOTS) {
-                    val owner = vEdges[r * DB_DOTS + c]
-                    val col = when (owner) {
-                        1 -> PlayBoxColors.Player1Color
-                        2 -> PlayBoxColors.Player2Color
-                        else -> Color(0xFFE5E7EB)
-                    }
-                    drawLine(
-                        col,
-                        Offset(c * step, r * step),
-                        Offset(c * step, (r + 1) * step),
-                        strokeWidth = (if (owner == 0) 3.dp else 7.dp).toPx(),
-                        cap = StrokeCap.Round
-                    )
-                }
+            for (r in 0 until DB_BOXES) for (c in 0 until DB_DOTS) {
+                val owner = vEdges[r * DB_DOTS + c]
+                val isLast = lastEdgeKey == "v_${r}_$c"
+                val col = when (owner) { 1 -> PlayBoxColors.Player1Color; 2 -> PlayBoxColors.Player2Color; else -> Color(0xFFE5E7EB) }
+                if (isLast) drawLine(PlayBoxColors.BoltGold, Offset(c * step, r * step), Offset(c * step, (r + 1) * step), strokeWidth = 11.dp.toPx(), cap = StrokeCap.Round)
+                drawLine(col, Offset(c * step, r * step), Offset(c * step, (r + 1) * step), strokeWidth = (if (owner == 0) 3.dp else 7.dp).toPx(), cap = StrokeCap.Round)
             }
-            // Dots
-            for (r in 0 until DB_DOTS) {
-                for (c in 0 until DB_DOTS) {
-                    drawCircle(PlayBoxColors.DarkInk, 6.5.dp.toPx(), Offset(c * step, r * step))
-                }
+            for (r in 0 until DB_DOTS) for (c in 0 until DB_DOTS) {
+                drawCircle(PlayBoxColors.DarkInk, 6.5.dp.toPx(), Offset(c * step, r * step))
             }
         }
 
@@ -306,10 +248,7 @@ fun DotsBoxesScreen(
                 subtitle = "Квадраты: $p1Count — $p2Count",
                 mode = config.mode,
                 roomState = roomState,
-                onRematch = {
-                    if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch()
-                    else reset(1)
-                },
+                onRematch = { if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch() else reset(1) },
                 onExit = onExit
             )
         }
@@ -318,17 +257,22 @@ fun DotsBoxesScreen(
 
 @Composable
 fun ScorePill(label: String, score: Int, color: Color, active: Boolean) {
+    val bg by animateColorAsState(if (active) color else PlayBoxColors.HeaderSurface, label = "pillBg")
+    val scale by animateFloatAsState(if (active) 1.04f else 1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "pillScale")
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = if (active) color else PlayBoxColors.HeaderSurface,
-        shadowElevation = if (active) 4.dp else 1.dp
+        color = bg,
+        shadowElevation = if (active) 5.dp else 1.dp,
+        modifier = Modifier.graphicsLayer { scaleX = scale; scaleY = scale }
     ) {
         Text(
             text = "$label: $score",
             color = if (active) Color.White else PlayBoxColors.DarkInk,
             fontWeight = FontWeight.ExtraBold,
-            fontSize = 15.sp,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            fontSize = 14.sp,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
         )
     }
 }
@@ -339,7 +283,6 @@ private fun chooseDotsBoxesMove(hEdges: IntArray, vEdges: IntArray, difficulty: 
     for (r in 0 until DB_BOXES) for (c in 0 until DB_DOTS) if (vEdges[r * DB_DOTS + c] == 0) all.add(Triple(false, r, c))
     if (all.isEmpty()) return null
     if (difficulty == BotDifficulty.EASY && Random.nextFloat() < 0.6f) return all.random()
-
     fun boxEdgesCount(br: Int, bc: Int, h: IntArray, v: IntArray): Int {
         var cnt = 0
         if (h[br * DB_BOXES + bc] != 0) cnt++
@@ -348,30 +291,15 @@ private fun chooseDotsBoxesMove(hEdges: IntArray, vEdges: IntArray, difficulty: 
         if (v[br * DB_DOTS + bc + 1] != 0) cnt++
         return cnt
     }
-
-    // 1. Complete any 3-sided box
     for (m in all) {
-        val nh = hEdges.copyOf()
-        val nv = vEdges.copyOf()
+        val nh = hEdges.copyOf(); val nv = vEdges.copyOf()
         if (m.first) nh[m.second * DB_BOXES + m.third] = 2 else nv[m.second * DB_DOTS + m.third] = 2
-        val completes = (0 until DB_BOXES).any { br ->
-            (0 until DB_BOXES).any { bc ->
-                boxEdgesCount(br, bc, hEdges, vEdges) == 3 && boxEdgesCount(br, bc, nh, nv) == 4
-            }
-        }
-        if (completes) return m
+        if ((0 until DB_BOXES).any { br -> (0 until DB_BOXES).any { bc -> boxEdgesCount(br, bc, hEdges, vEdges) == 3 && boxEdgesCount(br, bc, nh, nv) == 4 } }) return m
     }
-
-    // 2. Avoid creating 3-sided box
     val safe = all.filter { m ->
-        val nh = hEdges.copyOf()
-        val nv = vEdges.copyOf()
+        val nh = hEdges.copyOf(); val nv = vEdges.copyOf()
         if (m.first) nh[m.second * DB_BOXES + m.third] = 2 else nv[m.second * DB_DOTS + m.third] = 2
-        (0 until DB_BOXES).none { br ->
-            (0 until DB_BOXES).any { bc ->
-                boxEdgesCount(br, bc, hEdges, vEdges) == 2 && boxEdgesCount(br, bc, nh, nv) == 3
-            }
-        }
+        (0 until DB_BOXES).none { br -> (0 until DB_BOXES).any { bc -> boxEdgesCount(br, bc, hEdges, vEdges) == 2 && boxEdgesCount(br, bc, nh, nv) == 3 } }
     }
     return if (safe.isNotEmpty()) safe.random() else all.random()
 }

@@ -65,27 +65,18 @@ fun MinesweeperScreen(
     var flagged by remember(resetSignal) { mutableStateOf(BooleanArray(MS_SIZE * MS_SIZE)) }
     var flagMode by remember(resetSignal) { mutableStateOf(false) }
     var elapsedSec by remember(resetSignal) { mutableIntStateOf(0) }
-    var finishedState by remember(resetSignal) { mutableStateOf<String?>(null) } // "WIN" | "LOSE"
+    var finishedState by remember(resetSignal) { mutableStateOf<String?>(null) }
     var oppProgress by remember(resetSignal) { mutableIntStateOf(0) }
     var currentSeed by remember(resetSignal) { mutableIntStateOf(config.seed) }
 
     fun reset(seed: Int) {
-        currentSeed = seed
-        mines = null
-        revealed = BooleanArray(MS_SIZE * MS_SIZE)
-        flagged = BooleanArray(MS_SIZE * MS_SIZE)
-        flagMode = false
-        elapsedSec = 0
-        finishedState = null
-        oppProgress = 0
+        currentSeed = seed; mines = null; revealed = BooleanArray(MS_SIZE * MS_SIZE); flagged = BooleanArray(MS_SIZE * MS_SIZE)
+        flagMode = false; elapsedSec = 0; finishedState = null; oppProgress = 0
     }
 
     LaunchedEffect(mines, finishedState) {
         if (mines != null && finishedState == null) {
-            while (finishedState == null) {
-                delay(1000)
-                elapsedSec += 1
-            }
+            while (finishedState == null) { delay(1000); elapsedSec += 1 }
         }
     }
 
@@ -95,9 +86,7 @@ fun MinesweeperScreen(
                 when (event) {
                     is OnlineEvent.OpponentState -> {
                         oppProgress = event.payload.optInt("pct", oppProgress)
-                        if (event.payload.optBoolean("won", false) && finishedState == null) {
-                            finishedState = "LOSE"
-                        }
+                        if (event.payload.optBoolean("won", false) && finishedState == null) finishedState = "LOSE"
                     }
                     is OnlineEvent.RematchStart -> reset(event.seed)
                     else -> Unit
@@ -108,37 +97,17 @@ fun MinesweeperScreen(
 
     fun toggleFlag(idx: Int) {
         if (finishedState != null || revealed[idx]) return
-        val next = flagged.copyOf()
-        next[idx] = !next[idx]
-        flagged = next
+        flagged = flagged.copyOf().apply { this[idx] = !this[idx] }
         if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
-    fun revealCell(idx: Int) {
-        if (finishedState != null || flagged[idx] || revealed[idx]) return
-        val activeMines = mines ?: generateMines(idx, currentSeed).also { mines = it }
-
-        if (activeMines[idx]) {
-            val allRev = BooleanArray(MS_SIZE * MS_SIZE) { i -> revealed[i] || activeMines[i] }
-            revealed = allRev
-            finishedState = "LOSE"
-            if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            return
-        }
-
-        val nextRev = revealed.copyOf()
-        floodReveal(idx, activeMines, nextRev)
-        revealed = nextRev
-        if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-
+    fun checkProgressAndWin(nextRev: BooleanArray, activeMines: BooleanArray) {
         val safeTotal = MS_SIZE * MS_SIZE - MS_MINES
         val safeOpen = nextRev.indices.count { nextRev[it] && !activeMines[it] }
         val pct = (safeOpen * 100) / safeTotal
-
         if (safeOpen == safeTotal) {
             finishedState = "WIN"
-            prefs.recordWin(GameId.MINESWEEPER)
-            prefs.updateBestTime(GameId.MINESWEEPER, elapsedSec)
+            prefs.recordWin(GameId.MINESWEEPER); prefs.updateBestTime(GameId.MINESWEEPER, elapsedSec)
             if (config.mode == PlayMode.ONLINE) {
                 onlineClient.sendState(JSONObject().put("pct", 100).put("won", true))
                 onlineClient.sendGameOver(config.playerIndex)
@@ -148,18 +117,58 @@ fun MinesweeperScreen(
         }
     }
 
+    fun revealCell(idx: Int) {
+        if (finishedState != null || flagged[idx]) return
+        val activeMines = mines ?: generateMines(idx, currentSeed).also { mines = it }
+
+        // Chord-reveal if tapping already-revealed number whose surrounding flags match count
+        if (revealed[idx]) {
+            val adj = countAdjMines(idx, activeMines)
+            if (adj > 0) {
+                val r = idx / MS_SIZE; val c = idx % MS_SIZE
+                val neighbors = (-1..1).flatMap { dr -> (-1..1).map { dc -> (r + dr) to (c + dc) } }
+                    .filter { (nr, nc) -> nr in 0 until MS_SIZE && nc in 0 until MS_SIZE }
+                    .map { (nr, nc) -> nr * MS_SIZE + nc }
+                if (neighbors.count { flagged[it] } == adj) {
+                    val nextRev = revealed.copyOf()
+                    for (ni in neighbors) {
+                        if (!flagged[ni] && !nextRev[ni]) {
+                            if (activeMines[ni]) {
+                                revealed = BooleanArray(MS_SIZE * MS_SIZE) { i -> nextRev[i] || activeMines[i] }
+                                finishedState = "LOSE"
+                                return
+                            }
+                            floodReveal(ni, activeMines, nextRev)
+                        }
+                    }
+                    revealed = nextRev
+                    checkProgressAndWin(nextRev, activeMines)
+                }
+            }
+            return
+        }
+
+        if (activeMines[idx]) {
+            revealed = BooleanArray(MS_SIZE * MS_SIZE) { i -> revealed[i] || activeMines[i] }
+            finishedState = "LOSE"
+            if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            return
+        }
+
+        val nextRev = revealed.copyOf()
+        floodReveal(idx, activeMines, nextRev)
+        revealed = nextRev
+        if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        checkProgressAndWin(nextRev, activeMines)
+    }
+
     val flagsLeft = MS_MINES - flagged.count { it }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    Column(Modifier.fillMaxSize().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             ScorePill("💣", flagsLeft, Color(0xFF38424D), true)
             ScorePill("⏱", elapsedSec, PlayBoxColors.Player2Color, false)
-            if (config.mode == PlayMode.ONLINE) {
-                ScorePill("Соп.", oppProgress, PlayBoxColors.OnlinePurple, false)
-            }
+            if (config.mode == PlayMode.ONLINE) ScorePill("Соп.%", oppProgress, PlayBoxColors.OnlinePurple, false)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -168,12 +177,12 @@ fun MinesweeperScreen(
             FilterChip(
                 selected = !flagMode,
                 onClick = { flagMode = false },
-                label = { Text("⛏️ Открывать", fontWeight = FontWeight.Bold) }
+                label = { Text("⛏️ Открывать", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
             )
             FilterChip(
                 selected = flagMode,
                 onClick = { flagMode = true },
-                label = { Text("🚩 Флажок", fontWeight = FontWeight.Bold) }
+                label = { Text("🚩 Флажок", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
             )
         }
 
@@ -190,14 +199,12 @@ fun MinesweeperScreen(
             verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             for (r in 0 until MS_SIZE) {
-                Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     for (c in 0 until MS_SIZE) {
                         val idx = r * MS_SIZE + c
-                        val isOpen = revealed[idx]
-                        val isFlag = flagged[idx]
+                        val isOpen = revealed[idx]; val isFlag = flagged[idx]
                         val isMine = mines?.get(idx) == true
                         val count = if (isOpen && !isMine && mines != null) countAdjMines(idx, mines!!) else 0
-
                         val bg = when {
                             isOpen && isMine -> Color(0xFFEF476F)
                             isOpen -> Color(0xFF3A4450)
@@ -217,12 +224,7 @@ fun MinesweeperScreen(
                         ) {
                             when {
                                 isOpen && isMine -> Text("💣", fontSize = 16.sp)
-                                isOpen && count > 0 -> Text(
-                                    "$count",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 15.sp,
-                                    color = mineNumberColor(count)
-                                )
+                                isOpen && count > 0 -> Text("$count", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = mineNumberColor(count))
                                 !isOpen && isFlag -> Text("🚩", fontSize = 15.sp)
                             }
                         }
@@ -231,19 +233,18 @@ fun MinesweeperScreen(
             }
         }
 
+        Spacer(Modifier.height(8.dp))
+        Text("Долгое нажатие — быстрый флаг · Тап по цифре открывает соседей", fontSize = 11.sp, color = PlayBoxColors.MutedInk)
         Spacer(Modifier.weight(1f))
 
         if (finishedState != null) {
             val won = finishedState == "WIN"
             GameResultBanner(
                 title = if (won) "Поле разминировано!" else if (config.mode == PlayMode.ONLINE && oppProgress >= 100) "Соперник опередил!" else "Бум! Мина!",
-                subtitle = "Время: ${elapsedSec} сек.",
+                subtitle = "Время: $elapsedSec сек.",
                 mode = config.mode,
                 roomState = roomState,
-                onRematch = {
-                    if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch()
-                    else reset(Random.nextInt(100000))
-                },
+                onRematch = { if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch() else reset(Random.nextInt(100000)) },
                 onExit = onExit
             )
         }
@@ -251,11 +252,8 @@ fun MinesweeperScreen(
 }
 
 private fun mineNumberColor(n: Int): Color = when (n) {
-    1 -> Color(0xFF38BDF8)
-    2 -> Color(0xFF4ADE80)
-    3 -> Color(0xFFF87171)
-    4 -> Color(0xFFA78BFA)
-    else -> Color(0xFFFBBF24)
+    1 -> Color(0xFF38BDF8); 2 -> Color(0xFF4ADE80); 3 -> Color(0xFFF87171)
+    4 -> Color(0xFFA78BFA); else -> Color(0xFFFBBF24)
 }
 
 private fun generateMines(safeIdx: Int, seed: Int): BooleanArray {
@@ -267,31 +265,25 @@ private fun generateMines(safeIdx: Int, seed: Int): BooleanArray {
 }
 
 private fun countAdjMines(idx: Int, mines: BooleanArray): Int {
-    val r = idx / MS_SIZE
-    val c = idx % MS_SIZE
-    var cnt = 0
+    val r = idx / MS_SIZE; val c = idx % MS_SIZE; var cnt = 0
     for (dr in -1..1) for (dc in -1..1) {
         if (dr == 0 && dc == 0) continue
-        val nr = r + dr
-        val nc = c + dc
+        val nr = r + dr; val nc = c + dc
         if (nr in 0 until MS_SIZE && nc in 0 until MS_SIZE && mines[nr * MS_SIZE + nc]) cnt++
     }
     return cnt
 }
 
 private fun floodReveal(start: Int, mines: BooleanArray, revealed: BooleanArray) {
-    val queue = ArrayDeque<Int>()
-    queue.add(start)
+    val queue = ArrayDeque<Int>(); queue.add(start)
     while (queue.isNotEmpty()) {
         val cur = queue.removeFirst()
         if (revealed[cur]) continue
         revealed[cur] = true
         if (countAdjMines(cur, mines) == 0) {
-            val r = cur / MS_SIZE
-            val c = cur % MS_SIZE
+            val r = cur / MS_SIZE; val c = cur % MS_SIZE
             for (dr in -1..1) for (dc in -1..1) {
-                val nr = r + dr
-                val nc = c + dc
+                val nr = r + dr; val nc = c + dc
                 if (nr in 0 until MS_SIZE && nc in 0 until MS_SIZE) {
                     val ni = nr * MS_SIZE + nc
                     if (!revealed[ni] && !mines[ni]) queue.add(ni)

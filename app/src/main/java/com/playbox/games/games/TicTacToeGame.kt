@@ -1,9 +1,12 @@
 package com.playbox.games.games
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,8 +35,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +50,7 @@ import com.playbox.games.network.OnlineEvent
 import com.playbox.games.network.OnlineRoomState
 import com.playbox.games.ui.components.GameResultBanner
 import com.playbox.games.ui.theme.PlayBoxColors
+import com.playbox.games.ui.theme.bounceClick
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import kotlin.random.Random
@@ -61,12 +65,13 @@ fun TicTacToeScreen(
     onExit: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
-    var boardSize by remember { mutableIntStateOf(3) } // 3 (3 in a row) or 5 (4 in a row)
+    var boardSize by remember { mutableIntStateOf(3) }
     val winLen = if (boardSize == 3) 3 else 4
     var board by remember(boardSize, resetSignal) { mutableStateOf(IntArray(boardSize * boardSize)) }
     var currentPlayer by remember(boardSize, resetSignal) { mutableIntStateOf(config.startingPlayer) }
-    var winner by remember(boardSize, resetSignal) { mutableStateOf<Int?>(null) } // 0 = draw, 1/2 = player
+    var winner by remember(boardSize, resetSignal) { mutableStateOf<Int?>(null) }
     var winLine by remember(boardSize, resetSignal) { mutableStateOf<List<Int>>(emptyList()) }
+    var lastIdx by remember(boardSize, resetSignal) { mutableIntStateOf(-1) }
 
     fun reset(size: Int = boardSize, starter: Int = 1) {
         boardSize = size
@@ -74,6 +79,7 @@ fun TicTacToeScreen(
         currentPlayer = starter
         winner = null
         winLine = emptyList()
+        lastIdx = -1
     }
 
     fun applyMove(idx: Int, player: Int, fromRemote: Boolean) {
@@ -81,6 +87,7 @@ fun TicTacToeScreen(
         val next = board.copyOf()
         next[idx] = player
         board = next
+        lastIdx = idx
         if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
         val line = findWinningLine(next, boardSize, winLen, player)
@@ -107,7 +114,6 @@ fun TicTacToeScreen(
         }
     }
 
-    // Online event listener
     LaunchedEffect(config.mode) {
         if (config.mode == PlayMode.ONLINE) {
             onlineClient.events.collect { event ->
@@ -115,19 +121,15 @@ fun TicTacToeScreen(
                     is OnlineEvent.OpponentMove -> {
                         val size = event.payload.optInt("size", boardSize)
                         if (size != boardSize) reset(size, currentPlayer)
-                        val idx = event.payload.optInt("index", -1)
-                        applyMove(idx, event.playerIndex, fromRemote = true)
+                        applyMove(event.payload.optInt("index", -1), event.playerIndex, fromRemote = true)
                     }
-                    is OnlineEvent.RematchStart -> {
-                        reset(boardSize, event.startingPlayer)
-                    }
+                    is OnlineEvent.RematchStart -> reset(boardSize, event.startingPlayer)
                     else -> Unit
                 }
             }
         }
     }
 
-    // Bot turn
     LaunchedEffect(currentPlayer, winner, boardSize) {
         if (config.mode == PlayMode.SOLO && currentPlayer == 2 && winner == null) {
             delay(360)
@@ -136,23 +138,27 @@ fun TicTacToeScreen(
         }
     }
 
+    val winLineProgress by animateFloatAsState(
+        targetValue = if (winLine.isNotEmpty()) 1f else 0f,
+        animationSpec = tween(durationMillis = 360),
+        label = "winLine"
+    )
+
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (config.mode != PlayMode.ONLINE) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 FilterChip(
                     selected = boardSize == 3,
                     onClick = { reset(3, 1) },
-                    label = { Text("3×3 (3 в ряд)", fontWeight = FontWeight.Bold) }
+                    label = { Text("3×3 (3 в ряд)", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                 )
                 FilterChip(
                     selected = boardSize == 5,
                     onClick = { reset(5, 1) },
-                    label = { Text("5×5 (4 в ряд)", fontWeight = FontWeight.Bold) }
+                    label = { Text("5×5 (4 в ряд)", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                 )
             }
         }
@@ -167,14 +173,10 @@ fun TicTacToeScreen(
 
         val statusText = when {
             winner == 0 -> "Ничья!"
-            winner != null -> {
-                if (config.mode == PlayMode.SOLO) {
-                    if (winner == 1) "Вы победили!" else "Бот победил!"
-                } else if (config.mode == PlayMode.ONLINE) {
-                    if (winner == config.playerIndex) "Вы победили!" else "Соперник победил!"
-                } else {
-                    "Победил Игрок $winner!"
-                }
+            winner != null -> when (config.mode) {
+                PlayMode.SOLO -> if (winner == 1) "Вы победили!" else "Бот победил!"
+                PlayMode.ONLINE -> if (winner == config.playerIndex) "Вы победили!" else "Соперник победил!"
+                PlayMode.LOCAL_2P -> "Победил Игрок $winner!"
             }
             config.mode == PlayMode.ONLINE && roomState?.bothConnected != true -> "Ожидаем соперника..."
             config.mode == PlayMode.ONLINE -> if (currentPlayer == config.playerIndex) "Ваш ход (${if (config.playerIndex == 1) "X" else "O"})" else "Ход соперника..."
@@ -182,11 +184,7 @@ fun TicTacToeScreen(
             else -> "Ход Игрока $currentPlayer (${if (currentPlayer == 1) "X" else "O"})"
         }
 
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = PlayBoxColors.HeaderSurface,
-            shadowElevation = 2.dp
-        ) {
+        Surface(shape = RoundedCornerShape(16.dp), color = PlayBoxColors.HeaderSurface, shadowElevation = 3.dp) {
             Text(
                 text = statusText,
                 fontSize = 16.sp,
@@ -207,64 +205,58 @@ fun TicTacToeScreen(
                 .border(4.dp, PlayBoxColors.DarkInk, RoundedCornerShape(24.dp))
                 .padding(12.dp)
         ) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (r in 0 until boardSize) {
-                    Row(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (c in 0 until boardSize) {
                             val idx = r * boardSize + c
                             val cellVal = board[idx]
                             val isWinCell = idx in winLine
+                            val scale by animateFloatAsState(
+                                targetValue = if (cellVal != 0) 1f else 0.4f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                label = "xo_$idx"
+                            )
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxSize()
                                     .clip(RoundedCornerShape(14.dp))
-                                    .background(if (isWinCell) Color(0xFFFFF3B0) else PlayBoxColors.CreamBg)
-                                    .border(
-                                        2.dp,
-                                        if (isWinCell) PlayBoxColors.BoltGold else Color(0xFFEBD8BC),
-                                        RoundedCornerShape(14.dp)
-                                    )
-                                    .clickable(enabled = canTap && cellVal == 0) {
+                                    .background(if (isWinCell) Color(0xFFFFF3B0) else if (idx == lastIdx) Color(0xFFF3E8FF) else PlayBoxColors.CreamBg)
+                                    .border(2.dp, if (isWinCell) PlayBoxColors.BoltGold else Color(0xFFEBD8BC), RoundedCornerShape(14.dp))
+                                    .bounceClick(enabled = canTap && cellVal == 0) {
                                         applyMove(idx, currentPlayer, fromRemote = false)
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (cellVal != 0) {
-                                    Canvas(Modifier.fillMaxSize(0.62f)) {
+                                    Canvas(Modifier.fillMaxSize(0.62f * scale)) {
                                         val stroke = (if (boardSize == 3) 10.dp else 6.dp).toPx()
                                         if (cellVal == 1) {
-                                            drawLine(
-                                                PlayBoxColors.Player1Color,
-                                                Offset(0f, 0f),
-                                                Offset(size.width, size.height),
-                                                stroke,
-                                                StrokeCap.Round
-                                            )
-                                            drawLine(
-                                                PlayBoxColors.Player1Color,
-                                                Offset(size.width, 0f),
-                                                Offset(0f, size.height),
-                                                stroke,
-                                                StrokeCap.Round
-                                            )
+                                            drawLine(PlayBoxColors.Player1Color, Offset(0f, 0f), Offset(size.width, size.height), stroke, StrokeCap.Round)
+                                            drawLine(PlayBoxColors.Player1Color, Offset(size.width, 0f), Offset(0f, size.height), stroke, StrokeCap.Round)
                                         } else {
-                                            drawCircle(
-                                                color = PlayBoxColors.Player2Color,
-                                                style = Stroke(width = stroke)
-                                            )
+                                            drawCircle(color = PlayBoxColors.Player2Color, style = Stroke(width = stroke))
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                }
+            }
+
+            if (winLine.size >= 2 && winLineProgress > 0f) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val first = winLine.first(); val last = winLine.last()
+                    val r1 = first / boardSize; val c1 = first % boardSize
+                    val r2 = last / boardSize; val c2 = last % boardSize
+                    val cellW = size.width / boardSize
+                    val cellH = size.height / boardSize
+                    val p1 = Offset((c1 + 0.5f) * cellW, (r1 + 0.5f) * cellH)
+                    val p2 = Offset((c2 + 0.5f) * cellW, (r2 + 0.5f) * cellH)
+                    val end = Offset(p1.x + (p2.x - p1.x) * winLineProgress, p1.y + (p2.y - p1.y) * winLineProgress)
+                    drawLine(PlayBoxColors.BoltGold, p1, end, strokeWidth = 8.dp.toPx(), cap = StrokeCap.Round)
                 }
             }
         }
@@ -296,12 +288,8 @@ private fun findWinningLine(board: IntArray, size: Int, winLen: Int, player: Int
                 val cells = mutableListOf<Int>()
                 var ok = true
                 for (k in 0 until winLen) {
-                    val nr = r + dr * k
-                    val nc = c + dc * k
-                    if (nr !in 0 until size || nc !in 0 until size || board[nr * size + nc] != player) {
-                        ok = false
-                        break
-                    }
+                    val nr = r + dr * k; val nc = c + dc * k
+                    if (nr !in 0 until size || nc !in 0 until size || board[nr * size + nc] != player) { ok = false; break }
                     cells.add(nr * size + nc)
                 }
                 if (ok) return cells
@@ -314,10 +302,7 @@ private fun findWinningLine(board: IntArray, size: Int, winLen: Int, player: Int
 private fun chooseTicTacToeMove(board: IntArray, size: Int, winLen: Int, difficulty: BotDifficulty): Int {
     val empty = board.indices.filter { board[it] == 0 }
     if (empty.isEmpty()) return -1
-    if (difficulty == BotDifficulty.EASY && Random.nextFloat() < 0.65f) {
-        return empty.random()
-    }
-    // Check immediate win or immediate block
+    if (difficulty == BotDifficulty.EASY && Random.nextFloat() < 0.65f) return empty.random()
     for (idx in empty) {
         val copy = board.copyOf().apply { this[idx] = 2 }
         if (findWinningLine(copy, size, winLen, 2) != null) return idx
@@ -327,21 +312,16 @@ private fun chooseTicTacToeMove(board: IntArray, size: Int, winLen: Int, difficu
         if (findWinningLine(copy, size, winLen, 1) != null) return idx
     }
     if (size == 3 && difficulty == BotDifficulty.HARD) {
-        var bestScore = Int.MIN_VALUE
-        var bestMove = empty.first()
+        var bestScore = Int.MIN_VALUE; var bestMove = empty.first()
         for (idx in empty) {
             val copy = board.copyOf().apply { this[idx] = 2 }
             val s = minimax3x3(copy, isBot = false, depth = 0)
-            if (s > bestScore) {
-                bestScore = s
-                bestMove = idx
-            }
+            if (s > bestScore) { bestScore = s; bestMove = idx }
         }
         return bestMove
     }
     val center = (size / 2) * size + (size / 2)
-    if (board[center] == 0) return center
-    return empty.random()
+    return if (board[center] == 0) center else empty.random()
 }
 
 private fun minimax3x3(board: IntArray, isBot: Boolean, depth: Int): Int {
@@ -349,7 +329,6 @@ private fun minimax3x3(board: IntArray, isBot: Boolean, depth: Int): Int {
     if (findWinningLine(board, 3, 3, 1) != null) return depth - 10
     val empty = board.indices.filter { board[it] == 0 }
     if (empty.isEmpty()) return 0
-
     var best = if (isBot) Int.MIN_VALUE else Int.MAX_VALUE
     for (idx in empty) {
         board[idx] = if (isBot) 2 else 1

@@ -1,5 +1,6 @@
 package com.playbox.games.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,15 +31,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -46,7 +44,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -61,6 +58,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -74,12 +75,16 @@ import com.playbox.games.model.GameCatalog
 import com.playbox.games.model.GameCategory
 import com.playbox.games.model.GameDefinition
 import com.playbox.games.model.GameId
+import com.playbox.games.model.GameRules
 import com.playbox.games.model.LaunchConfig
 import com.playbox.games.model.PlayMode
 import com.playbox.games.network.OnlineClient
 import com.playbox.games.network.OnlineRoomState
 import com.playbox.games.ui.components.GameCardArtwork
+import com.playbox.games.ui.components.PlayBoxButton
+import com.playbox.games.ui.components.PlayBoxOutlinedButton
 import com.playbox.games.ui.theme.PlayBoxColors
+import com.playbox.games.ui.theme.bounceClick
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -122,79 +127,99 @@ fun HomeScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // Top Header inspired by reference screenshots
+        // Branded Top Header with PlayBox Logo, Wins Counter & Online Pill
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(PlayBoxColors.HeaderSurface)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(
-                onClick = { showSettingsDialog = true },
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(PlayBoxColors.CreamBg)
+                    .clip(RoundedCornerShape(14.dp))
+                    .bounceClick { showSettingsDialog = true }
+                    .padding(end = 6.dp)
             ) {
-                Icon(Icons.Rounded.Menu, contentDescription = "Меню", tint = Color(0xFFB57C84))
+                PlayBoxLogoBadge(modifier = Modifier.size(40.dp))
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "PlayBox",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp,
+                        color = PlayBoxColors.DarkInk,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = prefs.playerName,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = PlayBoxColors.MutedInk,
+                        maxLines = 1
+                    )
+                }
             }
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
 
             // Wins / Bolt counter pill
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = Color(0xFFFFECC2),
-                modifier = Modifier.clickable { showSettingsDialog = true }
+                modifier = Modifier.bounceClick { showSettingsDialog = true }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(22.dp)
+                            .size(20.dp)
                             .clip(CircleShape)
                             .background(PlayBoxColors.BoltGold)
                             .border(1.5.dp, PlayBoxColors.DarkInk, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Rounded.Bolt, contentDescription = null, tint = PlayBoxColors.DarkInk, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Rounded.Bolt, contentDescription = null, tint = PlayBoxColors.DarkInk, modifier = Modifier.size(14.dp))
                     }
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(5.dp))
                     Text(
                         text = "$totalWins",
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 18.sp,
-                        color = PlayBoxColors.DarkInk
+                        fontSize = 16.sp,
+                        color = PlayBoxColors.DarkInk,
+                        maxLines = 1
                     )
                 }
             }
 
             Spacer(Modifier.weight(1f))
 
-            // Online Hub button (replaces "Remove Ads" pill)
+            // Online Hub pill button
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = PlayBoxColors.OnlinePurple,
-                shadowElevation = 2.dp,
-                modifier = Modifier.clickable {
+                shadowElevation = 3.dp,
+                modifier = Modifier.bounceClick {
                     onlineError = null
                     showOnlineDialog = true
                 }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.Public, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.Public, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = if (roomState?.isConnected == true) "КОМНАТА ${roomState.code}" else "ОНЛАЙН ИГРА",
+                        text = if (roomState?.isConnected == true) "КОД ${roomState.code}" else "ОНЛАЙН",
                         color = Color.White,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -205,7 +230,7 @@ fun HomeScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Найти игру...", fontSize = 14.sp) },
+                placeholder = { Text("Найти игру из 54...", fontSize = 14.sp) },
                 leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = PlayBoxColors.MutedInk) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -234,7 +259,9 @@ fun HomeScreen(
                             Text(
                                 cat.label,
                                 fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
@@ -288,6 +315,13 @@ fun HomeScreen(
                     color = PlayBoxColors.DarkInk
                 )
                 Text(sheetGame.subtitle, fontSize = 14.sp, color = PlayBoxColors.MutedInk)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = GameRules.forGame(sheetGame.id),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = PlayBoxColors.MutedInk
+                )
 
                 Spacer(Modifier.height(14.dp))
 
@@ -299,7 +333,7 @@ fun HomeScreen(
                             FilterChip(
                                 selected = selectedDifficulty == diff,
                                 onClick = { selectedDifficulty = diff },
-                                label = { Text(diff.label, fontWeight = FontWeight.Bold) }
+                                label = { Text(diff.label, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                             )
                         }
                     }
@@ -307,7 +341,7 @@ fun HomeScreen(
                 }
 
                 // 1. Solo / Bot
-                Button(
+                PlayBoxButton(
                     onClick = {
                         activeGameSheet = null
                         onLaunchGame(
@@ -319,43 +353,39 @@ fun HomeScreen(
                         )
                     },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF118AB2))
+                    containerColor = Color(0xFF118AB2)
                 ) {
                     Icon(if (sheetGame.supportsBot) Icons.Rounded.SmartToy else Icons.Rounded.Person, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        if (sheetGame.supportsBot) "Играть против бота (${selectedDifficulty.label})" else "Одиночная игра",
-                        fontWeight = FontWeight.ExtraBold
+                        if (sheetGame.supportsBot) "Против бота (${selectedDifficulty.label})" else "Одиночная игра",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
                 if (sheetGame.supportsLocal2P) {
                     Spacer(Modifier.height(10.dp))
-                    Button(
+                    PlayBoxButton(
                         onClick = {
                             activeGameSheet = null
-                            onLaunchGame(
-                                LaunchConfig(
-                                    gameId = sheetGame.id,
-                                    mode = PlayMode.LOCAL_2P
-                                )
-                            )
+                            onLaunchGame(LaunchConfig(gameId = sheetGame.id, mode = PlayMode.LOCAL_2P))
                         },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF476F))
+                        containerColor = Color(0xFFEF476F)
                     ) {
                         Icon(Icons.Rounded.People, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Вдвоём на одном экране", fontWeight = FontWeight.ExtraBold)
+                        Text("Вдвоём на одном экране", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, maxLines = 1, softWrap = false)
                     }
                 }
 
                 if (sheetGame.supportsOnline) {
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
+                        PlayBoxButton(
                             enabled = !isOnlineBusy,
                             onClick = {
                                 isOnlineBusy = true
@@ -373,13 +403,13 @@ fun HomeScreen(
                                 }
                             },
                             modifier = Modifier.weight(1f).height(52.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = PlayBoxColors.OnlinePurple)
+                            containerColor = PlayBoxColors.OnlinePurple,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
                         ) {
-                            Text("Создать комнату", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                            Text("Создать комнату", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1, softWrap = false)
                         }
 
-                        OutlinedButton(
+                        PlayBoxOutlinedButton(
                             enabled = !isOnlineBusy,
                             onClick = {
                                 isOnlineBusy = true
@@ -409,9 +439,9 @@ fun HomeScreen(
                                 }
                             },
                             modifier = Modifier.weight(1f).height(52.dp),
-                            shape = RoundedCornerShape(16.dp)
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
                         ) {
-                            Text("Быстрый матч", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                            Text("Быстрый матч", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -432,7 +462,7 @@ fun HomeScreen(
         }
     }
 
-    // Online Room Lobby Dialog (Join by code OR Wait for friend)
+    // Online Room Lobby Dialog
     if (showOnlineDialog) {
         val activeRoom = roomState
         AlertDialog(
@@ -504,7 +534,7 @@ fun HomeScreen(
             },
             confirmButton = {
                 if (activeRoom == null) {
-                    Button(
+                    PlayBoxButton(
                         enabled = joinCodeInput.length >= 4 && !isOnlineBusy,
                         onClick = {
                             isOnlineBusy = true
@@ -529,13 +559,12 @@ fun HomeScreen(
                                     onlineError = err.message ?: "Комната не найдена"
                                 }
                             }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = PlayBoxColors.OnlinePurple)
+                        }
                     ) {
-                        Text("Войти", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Войти", fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 } else {
-                    Button(
+                    PlayBoxButton(
                         enabled = activeRoom.bothConnected || GameId.fromId(activeRoom.gameId)?.let { !GameCatalog.get(it).isDuelOnline } == true,
                         onClick = {
                             val gId = GameId.fromId(activeRoom.gameId) ?: GameId.TICTACTOE
@@ -550,10 +579,9 @@ fun HomeScreen(
                                     startingPlayer = activeRoom.startingPlayer
                                 )
                             )
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = PlayBoxColors.OnlinePurple)
+                        }
                     ) {
-                        Text("Начать игру", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Начать игру", fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
             },
@@ -562,7 +590,7 @@ fun HomeScreen(
                     if (activeRoom != null) onlineClient.disconnect()
                     showOnlineDialog = false
                 }) {
-                    Text(if (activeRoom != null) "Выйти из комнаты" else "Закрыть")
+                    Text(if (activeRoom != null) "Выйти" else "Закрыть")
                 }
             }
         )
@@ -594,11 +622,11 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { serverInput = PlayerPrefs.DEFAULT_SERVER_URL }) {
-                            Text("Внешний HTTPS", fontSize = 11.sp)
+                        PlayBoxOutlinedButton(onClick = { serverInput = PlayerPrefs.DEFAULT_SERVER_URL }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)) {
+                            Text("Внешний HTTPS", fontSize = 11.sp, maxLines = 1)
                         }
-                        TextButton(onClick = { serverInput = PlayerPrefs.LAN_SERVER_URL }) {
-                            Text("Локальный LAN", fontSize = 11.sp)
+                        PlayBoxOutlinedButton(onClick = { serverInput = PlayerPrefs.LAN_SERVER_URL }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)) {
+                            Text("Локальный LAN", fontSize = 11.sp, maxLines = 1)
                         }
                     }
                     Row(
@@ -617,16 +645,15 @@ fun HomeScreen(
                 }
             },
             confirmButton = {
-                Button(
+                PlayBoxButton(
                     onClick = {
                         prefs.playerName = nameInput
                         prefs.serverUrl = serverInput
                         prefs.hapticsEnabled = haptics
                         showSettingsDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = PlayBoxColors.OnlinePurple)
+                    }
                 ) {
-                    Text("Сохранить", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Сохранить", fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             },
             dismissButton = {
@@ -639,6 +666,33 @@ fun HomeScreen(
 }
 
 @Composable
+fun PlayBoxLogoBadge(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.clip(RoundedCornerShape(12.dp))) {
+        drawRect(
+            brush = Brush.linearGradient(
+                listOf(Color(0xFF7B2CBF), Color(0xFFF72585), Color(0xFFFF7A2F))
+            )
+        )
+        val pad = size.minDimension * 0.16f
+        drawRoundRect(
+            color = Color(0xFFFFF8EE),
+            topLeft = Offset(pad, pad * 1.15f),
+            size = Size(size.width - pad * 2, size.height - pad * 2.3f),
+            cornerRadius = CornerRadius(6.dp.toPx())
+        )
+        // Mini D-pad
+        val dCol = Color(0xFF232733)
+        drawRect(dCol, Offset(size.width * 0.25f, size.height * 0.45f), Size(size.width * 0.20f, size.height * 0.10f))
+        drawRect(dCol, Offset(size.width * 0.31f, size.height * 0.37f), Size(size.width * 0.08f, size.height * 0.26f))
+        // Mini colorful buttons
+        drawCircle(Color(0xFF38BDF8), size.minDimension * 0.055f, Offset(size.width * 0.67f, size.height * 0.40f))
+        drawCircle(Color(0xFFEF476F), size.minDimension * 0.055f, Offset(size.width * 0.59f, size.height * 0.50f))
+        drawCircle(Color(0xFF06D6A0), size.minDimension * 0.055f, Offset(size.width * 0.75f, size.height * 0.50f))
+        drawCircle(Color(0xFFFFCA3A), size.minDimension * 0.055f, Offset(size.width * 0.67f, size.height * 0.60f))
+    }
+}
+
+@Composable
 private fun GameGridCard(
     game: GameDefinition,
     onClick: () -> Unit
@@ -647,46 +701,59 @@ private fun GameGridCard(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(0.84f)
+            .bounceClick(onClick = onClick)
     ) {
         Surface(
             modifier = Modifier
                 .fillMaxSize()
                 .border(4.dp, Color.White, RoundedCornerShape(22.dp))
-                .clip(RoundedCornerShape(22.dp))
-                .clickable(onClick = onClick),
+                .clip(RoundedCornerShape(22.dp)),
             shape = RoundedCornerShape(22.dp),
             color = game.cardBg,
-            shadowElevation = 4.dp
+            shadowElevation = 5.dp
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(12.dp)
-            ) {
-                Text(
-                    text = game.title,
-                    color = game.titleColor,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 15.sp,
-                    lineHeight = 17.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(4.dp))
-                Box(
-                    modifier = Modifier
-                        .width(42.dp)
-                        .height(3.5.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(game.accentColor)
-                )
-                Spacer(Modifier.height(4.dp))
+            Box(Modifier.fillMaxSize()) {
+                // Subtle top glossy highlight
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .height(44.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.White.copy(alpha = 0.16f), Color.Transparent)
+                            )
+                        )
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
                 ) {
-                    GameCardArtwork(gameId = game.id, modifier = Modifier.fillMaxSize())
+                    Text(
+                        text = game.title,
+                        color = game.titleColor,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 14.sp,
+                        lineHeight = 16.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(3.5.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(game.accentColor)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        GameCardArtwork(gameId = game.id, modifier = Modifier.fillMaxSize())
+                    }
                 }
             }
         }
@@ -695,7 +762,7 @@ private fun GameGridCard(
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .offset(x = (-4).dp, y = (-10).dp),
+                    .padding(start = 6.dp, bottom = 8.dp),
                 shape = RoundedCornerShape(10.dp),
                 color = game.badgeColor,
                 shadowElevation = 4.dp
@@ -705,6 +772,8 @@ private fun GameGridCard(
                     color = Color.White,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 10.sp,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier
                         .border(2.dp, Color.White, RoundedCornerShape(10.dp))
                         .padding(horizontal = 8.dp, vertical = 3.dp)

@@ -1,7 +1,11 @@
 package com.playbox.games.games
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -65,6 +70,7 @@ fun Connect4Screen(
     var winner by remember(resetSignal) { mutableStateOf<Int?>(null) }
     var winCells by remember(resetSignal) { mutableStateOf<Set<Int>>(emptySet()) }
     var lastMoveCell by remember(resetSignal) { mutableIntStateOf(-1) }
+    val dropRowAnim = remember { Animatable(0f) }
 
     fun reset(starter: Int = 1) {
         board = IntArray(C4_ROWS * C4_COLS)
@@ -72,6 +78,14 @@ fun Connect4Screen(
         winner = null
         winCells = emptySet()
         lastMoveCell = -1
+    }
+
+    LaunchedEffect(lastMoveCell) {
+        if (lastMoveCell >= 0) {
+            val targetRow = (lastMoveCell / C4_COLS).toFloat()
+            dropRowAnim.snapTo(-0.5f)
+            dropRowAnim.animateTo(targetRow, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow))
+        }
     }
 
     fun dropInColumn(col: Int, player: Int, fromRemote: Boolean) {
@@ -111,10 +125,7 @@ fun Connect4Screen(
         if (config.mode == PlayMode.ONLINE) {
             onlineClient.events.collect { event ->
                 when (event) {
-                    is OnlineEvent.OpponentMove -> {
-                        val col = event.payload.optInt("col", -1)
-                        dropInColumn(col, event.playerIndex, fromRemote = true)
-                    }
+                    is OnlineEvent.OpponentMove -> dropInColumn(event.payload.optInt("col", -1), event.playerIndex, fromRemote = true)
                     is OnlineEvent.RematchStart -> reset(event.startingPlayer)
                     else -> Unit
                 }
@@ -150,12 +161,10 @@ fun Connect4Screen(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Surface(shape = RoundedCornerShape(16.dp), color = PlayBoxColors.HeaderSurface, shadowElevation = 2.dp) {
+        Surface(shape = RoundedCornerShape(16.dp), color = PlayBoxColors.HeaderSurface, shadowElevation = 3.dp) {
             Text(
                 text = statusText,
                 fontSize = 16.sp,
@@ -172,7 +181,7 @@ fun Connect4Screen(
                 .fillMaxWidth()
                 .aspectRatio(7f / 6f)
                 .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xFF1F3647))
+                .border(4.dp, PlayBoxColors.DarkInk, RoundedCornerShape(22.dp))
                 .pointerInput(canTap, board) {
                     detectTapGestures { offset ->
                         if (!canTap) return@detectTapGestures
@@ -186,39 +195,32 @@ fun Connect4Screen(
             val r = minOf(cellW, cellH) * 0.38f
 
             drawRoundRect(
-                color = Color(0xFF1F3647),
+                brush = Brush.verticalGradient(listOf(Color(0xFF28465C), Color(0xFF192D3C))),
                 cornerRadius = CornerRadius(22.dp.toPx())
             )
             for (row in 0 until C4_ROWS) {
                 for (col in 0 until C4_COLS) {
                     val idx = row * C4_COLS + col
                     val center = Offset((col + 0.5f) * cellW, (row + 0.5f) * cellH)
+                    // Recessed hole
+                    drawCircle(Color(0xFFE7D3B5), radius = r, center = center)
                     val v = board[idx]
-                    val discColor = when (v) {
-                        1 -> PlayBoxColors.Player1Color
-                        2 -> Color(0xFF38BDF8)
-                        else -> PlayBoxColors.CreamBg
-                    }
-                    drawCircle(color = discColor, radius = r, center = center)
-                    if (idx in winCells) {
-                        drawCircle(
-                            color = Color(0xFFFFD166),
-                            radius = r * 1.06f,
-                            center = center,
-                            style = Stroke(width = 4.dp.toPx())
-                        )
-                    } else if (idx == lastMoveCell) {
-                        drawCircle(
-                            color = Color.White,
-                            radius = r * 0.3f,
-                            center = center,
-                            style = Stroke(width = 2.dp.toPx())
-                        )
+                    if (v != 0) {
+                        val cy = if (idx == lastMoveCell) (dropRowAnim.value + 0.5f) * cellH else center.y
+                        val discCenter = Offset(center.x, cy)
+                        val discColor = if (v == 1) PlayBoxColors.Player1Color else Color(0xFF38BDF8)
+                        drawCircle(color = discColor, radius = r * 0.96f, center = discCenter)
+                        drawCircle(color = Color.White.copy(alpha = 0.28f), radius = r * 0.35f, center = Offset(discCenter.x - r * 0.25f, discCenter.y - r * 0.25f))
+                        if (idx in winCells) {
+                            drawCircle(color = Color(0xFFFFD166), radius = r * 1.05f, center = discCenter, style = Stroke(width = 4.dp.toPx()))
+                        }
                     }
                 }
             }
         }
 
+        Spacer(Modifier.height(10.dp))
+        Text("Нажмите на нужную колонку, чтобы бросить фишку", fontSize = 12.sp, color = PlayBoxColors.MutedInk)
         Spacer(Modifier.weight(1f))
 
         if (winner != null) {
@@ -246,12 +248,8 @@ private fun findConnect4Win(board: IntArray, player: Int): Set<Int>? {
                 val cells = mutableSetOf<Int>()
                 var ok = true
                 for (k in 0 until 4) {
-                    val nr = r + dr * k
-                    val nc = c + dc * k
-                    if (nr !in 0 until C4_ROWS || nc !in 0 until C4_COLS || board[nr * C4_COLS + nc] != player) {
-                        ok = false
-                        break
-                    }
+                    val nr = r + dr * k; val nc = c + dc * k
+                    if (nr !in 0 until C4_ROWS || nc !in 0 until C4_COLS || board[nr * C4_COLS + nc] != player) { ok = false; break }
                     cells.add(nr * C4_COLS + nc)
                 }
                 if (ok) return cells
@@ -265,24 +263,17 @@ private fun chooseConnect4Move(board: IntArray, difficulty: BotDifficulty): Int 
     val validCols = (0 until C4_COLS).filter { board[it] == 0 }
     if (validCols.isEmpty()) return -1
     if (difficulty == BotDifficulty.EASY && Random.nextFloat() < 0.6f) return validCols.random()
-
     val depth = when (difficulty) {
-        BotDifficulty.EASY -> 2
-        BotDifficulty.MEDIUM -> 4
-        BotDifficulty.HARD -> 5
+        BotDifficulty.EASY -> 2; BotDifficulty.MEDIUM -> 4; BotDifficulty.HARD -> 5
     }
     val orderedCols = listOf(3, 2, 4, 1, 5, 0, 6).filter { it in validCols }
-    var bestScore = Int.MIN_VALUE
-    var bestCol = orderedCols.first()
+    var bestScore = Int.MIN_VALUE; var bestCol = orderedCols.first()
     for (col in orderedCols) {
         val row = (C4_ROWS - 1 downTo 0).first { board[it * C4_COLS + col] == 0 }
         board[row * C4_COLS + col] = 2
         val score = alphaBetaC4(board, depth - 1, Int.MIN_VALUE / 2, Int.MAX_VALUE / 2, maximizing = false)
         board[row * C4_COLS + col] = 0
-        if (score > bestScore) {
-            bestScore = score
-            bestCol = col
-        }
+        if (score > bestScore) { bestScore = score; bestCol = col }
     }
     return bestCol
 }
@@ -292,9 +283,7 @@ private fun alphaBetaC4(board: IntArray, depth: Int, alphaInit: Int, betaInit: I
     if (findConnect4Win(board, 1) != null) return -100000 - depth
     val validCols = listOf(3, 2, 4, 1, 5, 0, 6).filter { board[it] == 0 }
     if (depth == 0 || validCols.isEmpty()) return evaluateC4(board)
-
-    var alpha = alphaInit
-    var beta = betaInit
+    var alpha = alphaInit; var beta = betaInit
     if (maximizing) {
         var value = Int.MIN_VALUE / 2
         for (col in validCols) {
@@ -302,8 +291,7 @@ private fun alphaBetaC4(board: IntArray, depth: Int, alphaInit: Int, betaInit: I
             board[row * C4_COLS + col] = 2
             value = maxOf(value, alphaBetaC4(board, depth - 1, alpha, beta, false))
             board[row * C4_COLS + col] = 0
-            alpha = maxOf(alpha, value)
-            if (alpha >= beta) break
+            alpha = maxOf(alpha, value); if (alpha >= beta) break
         }
         return value
     } else {
@@ -313,8 +301,7 @@ private fun alphaBetaC4(board: IntArray, depth: Int, alphaInit: Int, betaInit: I
             board[row * C4_COLS + col] = 1
             value = minOf(value, alphaBetaC4(board, depth - 1, alpha, beta, true))
             board[row * C4_COLS + col] = 0
-            beta = minOf(beta, value)
-            if (alpha >= beta) break
+            beta = minOf(beta, value); if (alpha >= beta) break
         }
         return value
     }

@@ -28,7 +28,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -59,11 +61,11 @@ fun PingPongScreen(
     resetSignal: Int,
     onExit: () -> Unit
 ) {
-    // Normalized coordinates [0f..1f]
-    var p1X by remember(resetSignal) { mutableFloatStateOf(0.5f) } // bottom paddle
-    var p2X by remember(resetSignal) { mutableFloatStateOf(0.5f) } // top paddle
+    var p1X by remember(resetSignal) { mutableFloatStateOf(0.5f) }
+    var p2X by remember(resetSignal) { mutableFloatStateOf(0.5f) }
     var ballX by remember(resetSignal) { mutableFloatStateOf(0.5f) }
     var ballY by remember(resetSignal) { mutableFloatStateOf(0.5f) }
+    var trail by remember(resetSignal) { mutableStateOf<List<Offset>>(emptyList()) }
     var velX by remember(resetSignal) { mutableFloatStateOf(0.011f) }
     var velY by remember(resetSignal) { mutableFloatStateOf(0.014f) }
     var score1 by remember(resetSignal) { mutableIntStateOf(0) }
@@ -76,19 +78,14 @@ fun PingPongScreen(
     val isOnlineHost = config.mode != PlayMode.ONLINE || config.playerIndex == 1
 
     fun resetRound(towardsBottom: Boolean) {
-        ballX = 0.5f
-        ballY = 0.5f
+        ballX = 0.5f; ballY = 0.5f; trail = emptyList()
         val dirX = if (Random.nextBoolean()) 1f else -1f
         velX = dirX * (0.008f + Random.nextFloat() * 0.005f)
         velY = if (towardsBottom) 0.013f else -0.013f
     }
 
     fun resetMatch() {
-        p1X = 0.5f
-        p2X = 0.5f
-        score1 = 0
-        score2 = 0
-        winner = null
+        p1X = 0.5f; p2X = 0.5f; score1 = 0; score2 = 0; winner = null
         resetRound(true)
     }
 
@@ -104,8 +101,8 @@ fun PingPongScreen(
                             p1X = p.optDouble("p1X", p1X.toDouble()).toFloat()
                             ballX = p.optDouble("bx", ballX.toDouble()).toFloat()
                             ballY = p.optDouble("by", ballY.toDouble()).toFloat()
-                            score1 = p.optInt("s1", score1)
-                            score2 = p.optInt("s2", score2)
+                            trail = (trail + Offset(ballX, ballY)).takeLast(6)
+                            score1 = p.optInt("s1", score1); score2 = p.optInt("s2", score2)
                             val w = p.optInt("w", 0)
                             if (w > 0 && winner == null) {
                                 winner = w
@@ -120,7 +117,6 @@ fun PingPongScreen(
         }
     }
 
-    // Physics loop (~60fps on host/local/solo)
     LaunchedEffect(resetSignal, config.mode, config.difficulty, roomState?.bothConnected) {
         var tick = 0
         while (true) {
@@ -129,97 +125,67 @@ fun PingPongScreen(
             if (config.mode == PlayMode.ONLINE && roomState?.bothConnected != true) continue
 
             if (!isOnlineHost) {
-                if (tick % 2 == 0) {
-                    onlineClient.sendState(JSONObject().put("p2X", p2X.toDouble()))
-                }
+                if (tick % 2 == 0) onlineClient.sendState(JSONObject().put("p2X", p2X.toDouble()))
                 tick++
                 continue
             }
 
-            // Bot AI for top paddle
             if (config.mode == PlayMode.SOLO) {
                 val aiSpeed = when (config.difficulty) {
-                    BotDifficulty.EASY -> 0.010f
-                    BotDifficulty.MEDIUM -> 0.015f
-                    BotDifficulty.HARD -> 0.024f
+                    BotDifficulty.EASY -> 0.010f; BotDifficulty.MEDIUM -> 0.015f; BotDifficulty.HARD -> 0.024f
                 }
-                val diff = ballX - p2X
-                p2X = (p2X + diff.coerceIn(-aiSpeed, aiSpeed)).coerceIn(paddleWidth / 2f, 1f - paddleWidth / 2f)
+                p2X = (p2X + (ballX - p2X).coerceIn(-aiSpeed, aiSpeed)).coerceIn(paddleWidth / 2f, 1f - paddleWidth / 2f)
             }
 
-            ballX += velX
-            ballY += velY
+            ballX += velX; ballY += velY
+            trail = (trail + Offset(ballX, ballY)).takeLast(6)
 
-            if (ballX - ballRadius < 0f) {
-                ballX = ballRadius
-                velX = abs(velX)
-            } else if (ballX + ballRadius > 1f) {
-                ballX = 1f - ballRadius
-                velX = -abs(velX)
-            }
+            if (ballX - ballRadius < 0f) { ballX = ballRadius; velX = abs(velX) }
+            else if (ballX + ballRadius > 1f) { ballX = 1f - ballRadius; velX = -abs(velX) }
 
-            // Bottom paddle collision (P1)
             val p1Top = 0.92f - paddleHeight / 2f
-            if (velY > 0 && ballY + ballRadius >= p1Top && ballY - ballRadius <= p1Top + paddleHeight &&
-                abs(ballX - p1X) <= paddleWidth / 2f + ballRadius
-            ) {
+            if (velY > 0 && ballY + ballRadius >= p1Top && ballY - ballRadius <= p1Top + paddleHeight && abs(ballX - p1X) <= paddleWidth / 2f + ballRadius) {
                 ballY = p1Top - ballRadius
                 val offset = (ballX - p1X) / (paddleWidth / 2f)
                 velY = -(abs(velY) * 1.04f).coerceAtMost(0.028f)
                 velX = (offset * 0.018f).coerceIn(-0.022f, 0.022f)
             }
 
-            // Top paddle collision (P2)
             val p2Bottom = 0.08f + paddleHeight / 2f
-            if (velY < 0 && ballY - ballRadius <= p2Bottom && ballY + ballRadius >= p2Bottom - paddleHeight &&
-                abs(ballX - p2X) <= paddleWidth / 2f + ballRadius
-            ) {
+            if (velY < 0 && ballY - ballRadius <= p2Bottom && ballY + ballRadius >= p2Bottom - paddleHeight && abs(ballX - p2X) <= paddleWidth / 2f + ballRadius) {
                 ballY = p2Bottom + ballRadius
                 val offset = (ballX - p2X) / (paddleWidth / 2f)
                 velY = (abs(velY) * 1.04f).coerceAtMost(0.028f)
                 velX = (offset * 0.018f).coerceIn(-0.022f, 0.022f)
             }
 
-            // Scoring
             if (ballY < 0f) {
                 score1 += 1
                 if (score1 >= WIN_GOALS) {
                     winner = 1
                     if (config.mode != PlayMode.ONLINE || config.playerIndex == 1) prefs.recordWin(GameId.PING_PONG)
                     if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(1)
-                } else {
-                    resetRound(towardsBottom = true)
-                }
+                } else resetRound(true)
             } else if (ballY > 1f) {
                 score2 += 1
                 if (score2 >= WIN_GOALS) {
                     winner = 2
                     if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(2)
-                } else {
-                    resetRound(towardsBottom = false)
-                }
+                } else resetRound(false)
             }
 
             if (config.mode == PlayMode.ONLINE && tick % 2 == 0) {
                 onlineClient.sendState(
-                    JSONObject()
-                        .put("p1X", p1X.toDouble())
-                        .put("bx", ballX.toDouble())
-                        .put("by", ballY.toDouble())
-                        .put("s1", score1)
-                        .put("s2", score2)
-                        .put("w", winner ?: 0)
+                    JSONObject().put("p1X", p1X.toDouble()).put("bx", ballX.toDouble()).put("by", ballY.toDouble())
+                        .put("s1", score1).put("s2", score2).put("w", winner ?: 0)
                 )
             }
             tick++
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+    Column(Modifier.fillMaxSize().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             ScorePill("Игрок 1", score1, PlayBoxColors.Player2Color, true)
             ScorePill(if (config.mode == PlayMode.SOLO) "Бот" else "Игрок 2", score2, PlayBoxColors.Player1Color, true)
         }
@@ -230,7 +196,6 @@ fun PingPongScreen(
                 .fillMaxWidth()
                 .weight(1f)
                 .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xFF43AA8B))
                 .border(4.dp, PlayBoxColors.DarkInk, RoundedCornerShape(22.dp))
         ) {
             val mirrorForP2 = config.mode == PlayMode.ONLINE && config.playerIndex == 2
@@ -248,12 +213,8 @@ fun PingPongScreen(
                                         val ny = change.position.y / size.height
                                         when (config.mode) {
                                             PlayMode.SOLO -> p1X = nx
-                                            PlayMode.LOCAL_2P -> {
-                                                if (ny < 0.5f) p2X = nx else p1X = nx
-                                            }
-                                            PlayMode.ONLINE -> {
-                                                if (config.playerIndex == 1) p1X = nx else p2X = 1f - nx
-                                            }
+                                            PlayMode.LOCAL_2P -> if (ny < 0.5f) p2X = nx else p1X = nx
+                                            PlayMode.ONLINE -> if (config.playerIndex == 1) p1X = nx else p2X = 1f - nx
                                         }
                                         change.consume()
                                     }
@@ -262,27 +223,30 @@ fun PingPongScreen(
                         }
                     }
             ) {
-                val w = size.width
-                val h = size.height
-
-                // Center line & circle
-                drawLine(Color.White.copy(alpha = 0.6f), Offset(0f, h / 2f), Offset(w, h / 2f), 3.dp.toPx())
-                drawCircle(Color.White.copy(alpha = 0.45f), w * 0.14f, Offset(w / 2f, h / 2f), style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()))
+                val w = size.width; val h = size.height
+                drawRect(Brush.verticalGradient(listOf(Color(0xFF38A385), Color(0xFF43AA8B), Color(0xFF38A385))))
+                drawLine(Color.White.copy(alpha = 0.65f), Offset(0f, h / 2f), Offset(w, h / 2f), 3.dp.toPx())
+                drawCircle(Color.White.copy(alpha = 0.45f), w * 0.14f, Offset(w / 2f, h / 2f), style = Stroke(3.dp.toPx()))
 
                 val dispBottomX = if (mirrorForP2) 1f - p2X else p1X
                 val dispTopX = if (mirrorForP2) 1f - p1X else p2X
                 val dispBallX = if (mirrorForP2) 1f - ballX else ballX
                 val dispBallY = if (mirrorForP2) 1f - ballY else ballY
 
-                // Top paddle
+                // Trail
+                trail.forEachIndexed { idx, pt ->
+                    val tx = if (mirrorForP2) 1f - pt.x else pt.x
+                    val ty = if (mirrorForP2) 1f - pt.y else pt.y
+                    val alpha = (idx + 1).toFloat() / (trail.size + 2) * 0.35f
+                    drawCircle(Color(0xFFFFD166).copy(alpha = alpha), ballRadius * w * (0.5f + idx * 0.08f), Offset(tx * w, ty * h))
+                }
+
                 drawRoundRect(
                     color = if (mirrorForP2) PlayBoxColors.Player2Color else PlayBoxColors.Player1Color,
                     topLeft = Offset((dispTopX - paddleWidth / 2f) * w, (0.08f - paddleHeight / 2f) * h),
                     size = Size(paddleWidth * w, paddleHeight * h),
                     cornerRadius = CornerRadius(12.dp.toPx())
                 )
-
-                // Bottom paddle
                 drawRoundRect(
                     color = if (mirrorForP2) PlayBoxColors.Player1Color else PlayBoxColors.Player2Color,
                     topLeft = Offset((dispBottomX - paddleWidth / 2f) * w, (0.92f - paddleHeight / 2f) * h),
@@ -290,10 +254,9 @@ fun PingPongScreen(
                     cornerRadius = CornerRadius(12.dp.toPx())
                 )
 
-                // Ball
                 val bCenter = Offset(dispBallX * w, dispBallY * h)
                 drawCircle(Color(0xFFFFD166), ballRadius * w, bCenter)
-                drawCircle(PlayBoxColors.DarkInk, ballRadius * w, bCenter, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx()))
+                drawCircle(PlayBoxColors.DarkInk, ballRadius * w, bCenter, style = Stroke(2.5.dp.toPx()))
             }
 
             if (winner != null) {
@@ -308,10 +271,7 @@ fun PingPongScreen(
                         subtitle = "Счёт $score1 : $score2 (до $WIN_GOALS)",
                         mode = config.mode,
                         roomState = roomState,
-                        onRematch = {
-                            if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch()
-                            else resetMatch()
-                        },
+                        onRematch = { if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch() else resetMatch() },
                         onExit = onExit
                     )
                 }

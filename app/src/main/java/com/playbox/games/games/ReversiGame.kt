@@ -1,5 +1,8 @@
 package com.playbox.games.games
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,7 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -72,12 +76,22 @@ fun ReversiScreen(
     var currentPlayer by remember(resetSignal) { mutableIntStateOf(config.startingPlayer) }
     var winner by remember(resetSignal) { mutableStateOf<Int?>(null) }
     var infoMsg by remember(resetSignal) { mutableStateOf<String?>(null) }
+    var flippedSet by remember(resetSignal) { mutableStateOf<Set<Int>>(emptySet()) }
+    val popAnim = remember { Animatable(1f) }
+
+    LaunchedEffect(flippedSet) {
+        if (flippedSet.isNotEmpty()) {
+            popAnim.snapTo(0.45f)
+            popAnim.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium))
+        }
+    }
 
     fun reset(starter: Int = 1) {
         board = initialReversiBoard()
         currentPlayer = starter
         winner = null
         infoMsg = null
+        flippedSet = emptySet()
     }
 
     val validMoves = remember(board, currentPlayer, winner) {
@@ -89,9 +103,11 @@ fun ReversiScreen(
         val flips = getReversiFlips(board, r, c, player)
         if (flips.isEmpty()) return
         val next = board.copyOf()
-        next[r * REV_SIZE + c] = player
+        val placed = r * REV_SIZE + c
+        next[placed] = player
         flips.forEach { next[it] = player }
         board = next
+        flippedSet = flips.toSet() + placed
         infoMsg = null
         if (prefs.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
@@ -103,13 +119,8 @@ fun ReversiScreen(
         val oppMoves = getValidReversiMoves(next, opp)
         val myMoves = getValidReversiMoves(next, player)
         if (oppMoves.isEmpty() && myMoves.isEmpty()) {
-            val c1 = next.count { it == 1 }
-            val c2 = next.count { it == 2 }
-            val w = when {
-                c1 > c2 -> 1
-                c2 > c1 -> 2
-                else -> 0
-            }
+            val c1 = next.count { it == 1 }; val c2 = next.count { it == 2 }
+            val w = when { c1 > c2 -> 1; c2 > c1 -> 2; else -> 0 }
             winner = w
             if (config.mode != PlayMode.ONLINE && w == 1) prefs.recordWin(GameId.REVERSI)
             if (config.mode == PlayMode.ONLINE && !fromRemote) {
@@ -128,9 +139,7 @@ fun ReversiScreen(
         if (config.mode == PlayMode.ONLINE) {
             onlineClient.events.collect { event ->
                 when (event) {
-                    is OnlineEvent.OpponentMove -> {
-                        applyMove(event.payload.optInt("r"), event.payload.optInt("c"), event.playerIndex, true)
-                    }
+                    is OnlineEvent.OpponentMove -> applyMove(event.payload.optInt("r"), event.payload.optInt("c"), event.playerIndex, true)
                     is OnlineEvent.RematchStart -> reset(event.startingPlayer)
                     else -> Unit
                 }
@@ -141,30 +150,27 @@ fun ReversiScreen(
     LaunchedEffect(currentPlayer, winner, board) {
         if (config.mode == PlayMode.SOLO && currentPlayer == 2 && winner == null) {
             delay(400)
-            val mv = chooseReversiMove(board, config.difficulty)
-            if (mv != null) applyMove(mv / REV_SIZE, mv % REV_SIZE, 2, false)
+            chooseReversiMove(board, config.difficulty)?.let { applyMove(it / REV_SIZE, it % REV_SIZE, 2, false) }
         }
     }
 
-    val p1 = board.count { it == 1 }
-    val p2 = board.count { it == 2 }
+    val p1 = board.count { it == 1 }; val p2 = board.count { it == 2 }
     val canTap = when (config.mode) {
         PlayMode.SOLO -> currentPlayer == 1 && winner == null
         PlayMode.LOCAL_2P -> winner == null
         PlayMode.ONLINE -> currentPlayer == config.playerIndex && winner == null && (roomState?.bothConnected == true)
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+    Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             ScorePill("Чёрные", p1, Color(0xFF1F2937), currentPlayer == 1 && winner == null)
             ScorePill("Белые", p2, Color(0xFF4B5563), currentPlayer == 2 && winner == null)
         }
         if (infoMsg != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(infoMsg!!, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PlayBoxColors.OnlinePurple)
+            Spacer(Modifier.height(8.dp))
+            Surface(shape = RoundedCornerShape(12.dp), color = PlayBoxColors.OnlinePurple) {
+                Text(infoMsg!!, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            }
         }
         Spacer(Modifier.height(16.dp))
 
@@ -173,7 +179,6 @@ fun ReversiScreen(
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF2B9348))
                 .border(4.dp, Color(0xFF1B4332), RoundedCornerShape(18.dp))
                 .pointerInput(canTap, validMoves) {
                     detectTapGestures { offset ->
@@ -181,12 +186,11 @@ fun ReversiScreen(
                         val cell = size.width / REV_SIZE
                         val c = (offset.x / cell).toInt().coerceIn(0, REV_SIZE - 1)
                         val r = (offset.y / cell).toInt().coerceIn(0, REV_SIZE - 1)
-                        if ((r * REV_SIZE + c) in validMoves) {
-                            applyMove(r, c, currentPlayer, false)
-                        }
+                        if ((r * REV_SIZE + c) in validMoves) applyMove(r, c, currentPlayer, false)
                     }
                 }
         ) {
+            drawRect(Brush.radialGradient(listOf(Color(0xFF38B058), Color(0xFF237A3B))))
             val cell = size.width / REV_SIZE
             for (i in 1 until REV_SIZE) {
                 drawLine(Color(0xFF1B4332), Offset(i * cell, 0f), Offset(i * cell, size.height), 1.5.dp.toPx())
@@ -196,14 +200,20 @@ fun ReversiScreen(
                 for (c in 0 until REV_SIZE) {
                     val idx = r * REV_SIZE + c
                     val center = Offset((c + 0.5f) * cell, (r + 0.5f) * cell)
+                    val mult = if (idx in flippedSet) popAnim.value else 1f
                     when (board[idx]) {
-                        1 -> drawCircle(Color(0xFF1F242D), cell * 0.38f, center)
+                        1 -> {
+                            drawCircle(Color.Black.copy(alpha = 0.25f), cell * 0.38f * mult, Offset(center.x + 2.dp.toPx(), center.y + 2.dp.toPx()))
+                            drawCircle(Color(0xFF1F242D), cell * 0.38f * mult, center)
+                            drawCircle(Color.White.copy(alpha = 0.14f), cell * 0.14f * mult, Offset(center.x - cell * 0.1f, center.y - cell * 0.1f))
+                        }
                         2 -> {
-                            drawCircle(Color.White, cell * 0.38f, center)
-                            drawCircle(Color(0xFFD1D5DB), cell * 0.38f, center, style = Stroke(1.5.dp.toPx()))
+                            drawCircle(Color.Black.copy(alpha = 0.25f), cell * 0.38f * mult, Offset(center.x + 2.dp.toPx(), center.y + 2.dp.toPx()))
+                            drawCircle(Color.White, cell * 0.38f * mult, center)
+                            drawCircle(Color(0xFFD1D5DB), cell * 0.38f * mult, center, style = Stroke(1.5.dp.toPx()))
                         }
                         else -> if (canTap && idx in validMoves) {
-                            drawCircle(Color(0xFF80ED99).copy(alpha = 0.7f), cell * 0.14f, center)
+                            drawCircle(Color(0xFFA7F3D0).copy(alpha = 0.78f), cell * 0.14f, center)
                         }
                     }
                 }
@@ -223,10 +233,7 @@ fun ReversiScreen(
                 subtitle = "Счёт фишек: $p1 — $p2",
                 mode = config.mode,
                 roomState = roomState,
-                onRematch = {
-                    if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch()
-                    else reset(1)
-                },
+                onRematch = { if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch() else reset(1) },
                 onExit = onExit
             )
         }
@@ -241,26 +248,19 @@ private fun getReversiFlips(board: IntArray, r: Int, c: Int, player: Int): List<
     val result = mutableListOf<Int>()
     for ((dr, dc) in REV_DIRS) {
         val line = mutableListOf<Int>()
-        var nr = r + dr
-        var nc = c + dc
+        var nr = r + dr; var nc = c + dc
         while (nr in 0 until REV_SIZE && nc in 0 until REV_SIZE && board[nr * REV_SIZE + nc] == opp) {
-            line.add(nr * REV_SIZE + nc)
-            nr += dr
-            nc += dc
+            line.add(nr * REV_SIZE + nc); nr += dr; nc += dc
         }
-        if (line.isNotEmpty() && nr in 0 until REV_SIZE && nc in 0 until REV_SIZE && board[nr * REV_SIZE + nc] == player) {
-            result.addAll(line)
-        }
+        if (line.isNotEmpty() && nr in 0 until REV_SIZE && nc in 0 until REV_SIZE && board[nr * REV_SIZE + nc] == player) result.addAll(line)
     }
     return result
 }
 
 private fun getValidReversiMoves(board: IntArray, player: Int): Set<Int> {
     val set = mutableSetOf<Int>()
-    for (r in 0 until REV_SIZE) {
-        for (c in 0 until REV_SIZE) {
-            if (getReversiFlips(board, r, c, player).isNotEmpty()) set.add(r * REV_SIZE + c)
-        }
+    for (r in 0 until REV_SIZE) for (c in 0 until REV_SIZE) {
+        if (getReversiFlips(board, r, c, player).isNotEmpty()) set.add(r * REV_SIZE + c)
     }
     return set
 }

@@ -112,6 +112,7 @@ private fun PlayBoxApp(prefs: PlayerPrefs, onlineClient: OnlineClient) {
                 .navigationBarsPadding()
         ) {
             GameTopBar(
+                gameId = current.gameId,
                 title = def.title,
                 mode = current.mode,
                 difficulty = current.difficulty,

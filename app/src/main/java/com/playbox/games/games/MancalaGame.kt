@@ -3,7 +3,6 @@ package com.playbox.games.games
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
@@ -30,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -46,15 +45,12 @@ import com.playbox.games.network.OnlineEvent
 import com.playbox.games.network.OnlineRoomState
 import com.playbox.games.ui.components.GameResultBanner
 import com.playbox.games.ui.theme.PlayBoxColors
+import com.playbox.games.ui.theme.bounceClick
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import kotlin.random.Random
 
-// Indices: 0..5 = P1 pits (bottom left->right), 6 = P1 store,
-//          7..12 = P2 pits (top right->left), 13 = P2 store
-private fun initialMancalaPits(): IntArray = IntArray(14) { i ->
-    if (i == 6 || i == 13) 0 else 4
-}
+private fun initialMancalaPits(): IntArray = IntArray(14) { i -> if (i == 6 || i == 13) 0 else 4 }
 
 @Composable
 fun MancalaScreen(
@@ -98,11 +94,7 @@ fun MancalaScreen(
             for (i in 0..5) { finalized[6] += finalized[i]; finalized[i] = 0 }
             for (i in 7..12) { finalized[13] += finalized[i]; finalized[i] = 0 }
             pits = finalized
-            val w = when {
-                finalized[6] > finalized[13] -> 1
-                finalized[13] > finalized[6] -> 2
-                else -> 0
-            }
+            val w = when { finalized[6] > finalized[13] -> 1; finalized[13] > finalized[6] -> 2; else -> 0 }
             winner = w
             infoMsg = null
             if (config.mode != PlayMode.ONLINE && w == 1) prefs.recordWin(GameId.MANCALA)
@@ -122,10 +114,7 @@ fun MancalaScreen(
         if (config.mode == PlayMode.ONLINE) {
             onlineClient.events.collect { event ->
                 when (event) {
-                    is OnlineEvent.OpponentMove -> {
-                        val pit = event.payload.optInt("pit", -1)
-                        sowPit(pit, event.playerIndex, fromRemote = true)
-                    }
+                    is OnlineEvent.OpponentMove -> sowPit(event.payload.optInt("pit", -1), event.playerIndex, true)
                     is OnlineEvent.RematchStart -> reset(event.startingPlayer)
                     else -> Unit
                 }
@@ -147,86 +136,55 @@ fun MancalaScreen(
         PlayMode.ONLINE -> currentPlayer == config.playerIndex && winner == null && (roomState?.bothConnected == true)
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+    Column(Modifier.fillMaxSize().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             ScorePill("Игрок 1", pits[6], PlayBoxColors.Player1Color, currentPlayer == 1 && winner == null)
             ScorePill(if (config.mode == PlayMode.SOLO) "Бот" else "Игрок 2", pits[13], PlayBoxColors.Player2Color, currentPlayer == 2 && winner == null)
         }
         if (infoMsg != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(infoMsg!!, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PlayBoxColors.OnlinePurple)
+            Spacer(Modifier.height(8.dp))
+            Surface(shape = RoundedCornerShape(12.dp), color = PlayBoxColors.OnlinePurple) {
+                Text(infoMsg!!, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            }
         }
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(22.dp))
 
-        // Wooden Mancala board
         Surface(
-            modifier = Modifier.fillMaxWidth().height(230.dp),
-            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier.fillMaxWidth().height(235.dp),
+            shape = RoundedCornerShape(30.dp),
             color = Color(0xFFE7B66B),
-            shadowElevation = 6.dp
+            shadowElevation = 8.dp
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .border(4.dp, PlayBoxColors.DarkInk, RoundedCornerShape(28.dp))
+                    .background(Brush.verticalGradient(listOf(Color(0xFFF3C677), Color(0xFFD99E4E))))
+                    .border(4.dp, PlayBoxColors.DarkInk, RoundedCornerShape(30.dp))
                     .padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // P2 Store (left)
                 MancalaStore(count = pits[13], color = PlayBoxColors.Player2Color, modifier = Modifier.weight(1f).fillMaxHeight())
-
-                // 6 columns of pits (top: P2 12 down to 7; bottom: P1 0 up to 5)
-                Column(
-                    modifier = Modifier.weight(4.5f).fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                Column(modifier = Modifier.weight(4.5f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (pit in 12 downTo 7) {
                             val active = canTap && currentPlayer == 2 && pits[pit] > 0
-                            MancalaPit(
-                                count = pits[pit],
-                                color = PlayBoxColors.Player2Color,
-                                active = active,
-                                modifier = Modifier.weight(1f).fillMaxHeight(),
-                                onClick = { if (active) sowPit(pit, 2, false) }
-                            )
+                            MancalaPit(pits[pit], PlayBoxColors.Player2Color, active, Modifier.weight(1f).fillMaxHeight()) { if (active) sowPit(pit, 2, false) }
                         }
                     }
-                    Row(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (pit in 0..5) {
                             val active = canTap && currentPlayer == 1 && pits[pit] > 0
-                            MancalaPit(
-                                count = pits[pit],
-                                color = PlayBoxColors.Player1Color,
-                                active = active,
-                                modifier = Modifier.weight(1f).fillMaxHeight(),
-                                onClick = { if (active) sowPit(pit, 1, false) }
-                            )
+                            MancalaPit(pits[pit], PlayBoxColors.Player1Color, active, Modifier.weight(1f).fillMaxHeight()) { if (active) sowPit(pit, 1, false) }
                         }
                     }
                 }
-
-                // P1 Store (right)
                 MancalaStore(count = pits[6], color = PlayBoxColors.Player1Color, modifier = Modifier.weight(1f).fillMaxHeight())
             }
         }
 
         Spacer(Modifier.height(14.dp))
-        Text(
-            text = "Нижний ряд — Игрок 1 (ход вправо). Верхний — Игрок 2 (ход влево).",
-            fontSize = 12.sp,
-            color = PlayBoxColors.MutedInk
-        )
+        Text("Нижний ряд → вправо · Верхний ряд ← влево", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = PlayBoxColors.MutedInk)
 
         Spacer(Modifier.weight(1f))
         if (winner != null) {
@@ -241,10 +199,7 @@ fun MancalaScreen(
                 subtitle = "Камни: ${pits[6]} — ${pits[13]}",
                 mode = config.mode,
                 roomState = roomState,
-                onRematch = {
-                    if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch()
-                    else reset(1)
-                },
+                onRematch = { if (config.mode == PlayMode.ONLINE) onlineClient.requestRematch() else reset(1) },
                 onExit = onExit
             )
         }
@@ -256,11 +211,11 @@ private fun MancalaStore(count: Int, color: Color, modifier: Modifier = Modifier
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(color.copy(alpha = 0.88f))
+            .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.85f), color)))
             .border(2.dp, PlayBoxColors.DarkInk, RoundedCornerShape(20.dp)),
         contentAlignment = Alignment.Center
     ) {
-        Text("$count", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+        Text("$count", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
     }
 }
 
@@ -272,22 +227,23 @@ private fun MancalaPit(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val gemColors = listOf(Color(0xFFFFF8EE), Color(0xFFFFD166), Color(0xFFA8DADC), Color(0xFFF4A261))
     Box(
         modifier = modifier
             .clip(CircleShape)
-            .background(color.copy(alpha = if (active) 0.95f else 0.72f))
+            .background(color.copy(alpha = if (active) 0.96f else 0.68f))
             .border(if (active) 3.dp else 1.5.dp, if (active) Color.White else PlayBoxColors.DarkInk, CircleShape)
-            .clickable(enabled = active, onClick = onClick),
+            .bounceClick(enabled = active, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Canvas(Modifier.fillMaxSize().padding(6.dp)) {
             val dots = count.coerceAtMost(8)
             for (i in 0 until dots) {
                 val angle = (i * 2.0 * Math.PI / dots.coerceAtLeast(1))
-                val r = if (dots == 1) 0f else size.minDimension * 0.25f
+                val r = if (dots == 1) 0f else size.minDimension * 0.27f
                 val cx = center.x + (r * kotlin.math.cos(angle)).toFloat()
                 val cy = center.y + (r * kotlin.math.sin(angle)).toFloat()
-                drawCircle(Color(0xFFFFF8EE).copy(alpha = 0.65f), 3.dp.toPx(), Offset(cx, cy))
+                drawCircle(gemColors[i % gemColors.size].copy(alpha = 0.72f), 3.2.dp.toPx(), Offset(cx, cy))
             }
         }
         Text("$count", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
@@ -296,28 +252,21 @@ private fun MancalaPit(
 
 private fun simulateMancalaMove(pits: IntArray, pitIdx: Int, player: Int): Pair<IntArray, Boolean> {
     val next = pits.copyOf()
-    var stones = next[pitIdx]
-    next[pitIdx] = 0
+    var stones = next[pitIdx]; next[pitIdx] = 0
     var cursor = pitIdx
     val oppStore = if (player == 1) 13 else 6
     val myStore = if (player == 1) 6 else 13
     val myRange = if (player == 1) 0..5 else 7..12
-
     while (stones > 0) {
         cursor = (cursor + 1) % 14
         if (cursor == oppStore) continue
-        next[cursor] += 1
-        stones -= 1
+        next[cursor] += 1; stones -= 1
     }
-
     if (cursor == myStore) return next to true
-
     if (cursor in myRange && next[cursor] == 1) {
         val opposite = 12 - cursor
         if (next[opposite] > 0) {
-            next[myStore] += next[opposite] + 1
-            next[opposite] = 0
-            next[cursor] = 0
+            next[myStore] += next[opposite] + 1; next[opposite] = 0; next[cursor] = 0
         }
     }
     return next to false
@@ -327,16 +276,11 @@ private fun chooseMancalaMove(pits: IntArray, difficulty: BotDifficulty): Int {
     val valid = (7..12).filter { pits[it] > 0 }
     if (valid.isEmpty()) return -1
     if (difficulty == BotDifficulty.EASY && Random.nextFloat() < 0.6f) return valid.random()
-
-    var bestPit = valid.first()
-    var bestScore = Int.MIN_VALUE
+    var bestPit = valid.first(); var bestScore = Int.MIN_VALUE
     for (pit in valid) {
         val (after, extra) = simulateMancalaMove(pits, pit, 2)
         val score = (after[13] - after[6]) * 3 + (if (extra) 8 else 0)
-        if (score > bestScore) {
-            bestScore = score
-            bestPit = pit
-        }
+        if (score > bestScore) { bestScore = score; bestPit = pit }
     }
     return bestPit
 }

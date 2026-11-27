@@ -4,19 +4,47 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Drop shadow under toybox console -->
+    <path
+        android:fillColor="#381A0D2E"
+        android:pathData="M30,34 L78,34 A14,14 0 0,1 92,48 L92,72 A14,14 0 0,1 78,86 L30,86 A14,14 0 0,1 16,72 L16,48 A14,14 0 0,1 30,34 Z" />
+    <!-- Console body outer bevel -->
+    <path
+        android:fillColor="#232733"
+        android:pathData="M29,28 L79,28 A14,14 0 0,1 93,42 L93,68 A14,14 0 0,1 79,82 L29,82 A14,14 0 0,1 15,68 L15,42 A14,14 0 0,1 29,28 Z" />
+    <!-- Cream console face -->
     <path
         android:fillColor="#FFF8EE"
-        android:pathData="M34,28 L74,28 A12,12 0 0,1 86,40 L86,68 A12,12 0 0,1 74,80 L34,80 A12,12 0 0,1 22,68 L22,40 A12,12 0 0,1 34,28 Z" />
+        android:pathData="M31,31 L77,31 A12,12 0 0,1 89,43 L89,65 A12,12 0 0,1 77,77 L31,77 A12,12 0 0,1 19,65 L19,43 A12,12 0 0,1 31,31 Z" />
+    <!-- Top glossy highlight -->
+    <path
+        android:fillColor="#80FFFFFF"
+        android:pathData="M32,33 L76,33 A9,9 0 0,1 85,40 L23,40 A9,9 0 0,1 32,33 Z" />
+    <!-- D-Pad left -->
     <path
         android:fillColor="#2B2D42"
-        android:pathData="M34,47 h14 v6 h-14 z M38,43 h6 v14 h-6 z" />
+        android:pathData="M29,51 h18 v7 h-18 z M34.5,45.5 h7 v18 h-7 z" />
     <path
-        android:fillColor="#00B4D8"
-        android:pathData="M65,44 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+        android:fillColor="#4A4E69"
+        android:pathData="M36,53 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+    <!-- 4 Colored Arcade Buttons -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M65,43 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
     <path
         android:fillColor="#EF476F"
-        android:pathData="M56,55 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+        android:pathData="M56,52 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
     <path
         android:fillColor="#06D6A0"
-        android:pathData="M73,55 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+        android:pathData="M74,52 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#FFCA3A"
+        android:pathData="M65,61 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <!-- Crown Sparkle Badge on top -->
+    <path
+        android:fillColor="#FFCA3A"
+        android:pathData="M46,28 L49,21 L54,25 L59,21 L62,28 Z" />
+    <path
+        android:fillColor="#232733"
+        android:pathData="M45,28 L63,28 L62,30 L46,30 Z" />
 </vector>

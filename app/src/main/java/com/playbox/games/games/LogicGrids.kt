@@ -1,5 +1,8 @@
 package com.playbox.games.games
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -8,18 +11,19 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,7 +37,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,7 +53,9 @@ import com.playbox.games.network.OnlineClient
 import com.playbox.games.network.OnlineEvent
 import com.playbox.games.network.OnlineRoomState
 import com.playbox.games.ui.components.GameResultBanner
+import com.playbox.games.ui.components.PlayBoxOutlinedButton
 import com.playbox.games.ui.theme.PlayBoxColors
+import com.playbox.games.ui.theme.bounceClick
 import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.random.Random
@@ -56,7 +65,7 @@ internal val SORT_PALETTE = listOf(
     Color(0xFFFFCA3A), Color(0xFF9B5DE5), Color(0xFFF3722C)
 )
 
-// Shared engine for WaterSort & NutsBolts
+// Shared engine for WaterSort & NutsBolts with animated lift!
 @Composable
 private fun ColorSortScreen(
     gameId: GameId,
@@ -111,7 +120,6 @@ private fun ColorSortScreen(
         if (src.isEmpty() || dst.size >= 4) return
         val topColor = src.last()
         if (dst.isNotEmpty() && dst.last() != topColor) return
-
         var count = 0
         for (i in src.lastIndex downTo 0) {
             if (src[i] == topColor && dst.size + count < 4) count++ else break
@@ -119,11 +127,7 @@ private fun ColorSortScreen(
         if (count == 0) return
         history = history + listOf(containers)
         containers = containers.mapIndexed { idx, list ->
-            when (idx) {
-                from -> list.dropLast(count)
-                to -> list + List(count) { topColor }
-                else -> list
-            }
+            when (idx) { from -> list.dropLast(count); to -> list + List(count) { topColor }; else -> list }
         }
     }
 
@@ -134,40 +138,59 @@ private fun ColorSortScreen(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             ScorePill("Уровень", level, PlayBoxColors.BoltGold, true)
             if (config.mode == PlayMode.ONLINE) ScorePill("Соп. ур.", oppLevel, PlayBoxColors.OnlinePurple, false)
-            OutlinedButton(enabled = history.isNotEmpty(), onClick = {
-                containers = history.last(); history = history.dropLast(1); selectedIdx = null
-            }) { Text("Отмена", color = Color.White) }
+            PlayBoxOutlinedButton(
+                enabled = history.isNotEmpty(),
+                onClick = { containers = history.last(); history = history.dropLast(1); selectedIdx = null },
+                contentColor = Color.White,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            ) { Text("↩ Отмена", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
         }
         Spacer(Modifier.weight(1f))
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             containers.forEachIndexed { idx, stack ->
                 val isSel = selectedIdx == idx
-                Column(
+                val topLift by animateDpAsState(if (isSel) (-12).dp else 0.dp, spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "lift_$idx")
+                Box(
                     modifier = Modifier
-                        .size(width = 48.dp, height = 164.dp)
-                        .clip(RoundedCornerShape(if (isBolts) 10.dp else 22.dp))
-                        .background(if (isBolts) Color(0xFF342E40) else Color.White.copy(alpha = 0.14f))
-                        .border(if (isSel) 3.dp else 2.dp, if (isSel) PlayBoxColors.BoltGold else Color.White.copy(alpha = 0.7f), RoundedCornerShape(if (isBolts) 10.dp else 22.dp))
+                        .width(48.dp)
+                        .height(176.dp)
                         .clickable(enabled = !solved) {
                             val sel = selectedIdx
-                            if (sel == null) {
-                                if (stack.isNotEmpty()) selectedIdx = idx
-                            } else {
-                                tryPour(sel, idx)
-                                selectedIdx = null
-                            }
-                        }
-                        .padding(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (isBolts) 4.dp else 0.dp, Alignment.Bottom),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                            if (sel == null) { if (stack.isNotEmpty()) selectedIdx = idx }
+                            else { tryPour(sel, idx); selectedIdx = null }
+                        },
+                    contentAlignment = Alignment.BottomCenter
                 ) {
-                    stack.reversed().forEach { cIdx ->
+                    if (isBolts) {
+                        // Metallic bolt rod + base
+                        Box(Modifier.width(12.dp).height(152.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFFCBD5E1)))
+                        Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF94A3B8)))
+                    } else {
+                        // Glass test tube outline
                         Box(
-                            Modifier.fillMaxWidth().height(34.dp)
-                                .clip(RoundedCornerShape(if (isBolts) 8.dp else 4.dp))
-                                .background(SORT_PALETTE[cIdx % SORT_PALETTE.size])
+                            Modifier.fillMaxWidth().height(162.dp)
+                                .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp, topStart = 6.dp, topEnd = 6.dp))
+                                .background(Color.White.copy(alpha = 0.14f))
+                                .border(2.5.dp, if (isSel) PlayBoxColors.BoltGold else Color.White.copy(alpha = 0.72f), RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp, topStart = 6.dp, topEnd = 6.dp))
                         )
+                    }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = if (isBolts) 12.dp else 5.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (isBolts) 4.dp else 0.dp, Alignment.Bottom),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        stack.reversed().forEachIndexed { posFromTop, cIdx ->
+                            val liftMod = if (posFromTop == 0) Modifier.offset(y = topLift) else Modifier
+                            val c = SORT_PALETTE[cIdx % SORT_PALETTE.size]
+                            Box(
+                                liftMod.fillMaxWidth().height(34.dp)
+                                    .clip(RoundedCornerShape(if (isBolts) 9.dp else 6.dp))
+                                    .background(Brush.horizontalGradient(listOf(c, c.copy(alpha = 0.82f), c)))
+                                    .border(if (isBolts) 1.5.dp else 0.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(9.dp))
+                            )
+                        }
                     }
                 }
             }
@@ -191,18 +214,14 @@ fun WaterSortScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
 fun NutsBoltsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) =
     ColorSortScreen(GameId.NUTS_BOLTS, true, config, prefs, onlineClient, roomState, resetSignal, onExit)
 
-// 13. SUDOKU (Generated valid 9x9 via base permutation)
+// 13. SUDOKU (With 3x3 borders, Pencil Notes, Erase, Highlight matching numbers)
 private fun generateSudoku(seed: Int): Pair<IntArray, IntArray> {
     val rng = Random(seed)
     val digits = (1..9).shuffled(rng)
     val sol = IntArray(81)
-    for (r in 0..8) for (c in 0..8) {
-        val v = (r * 3 + r / 3 + c) % 9
-        sol[r * 9 + c] = digits[v]
-    }
+    for (r in 0..8) for (c in 0..8) sol[r * 9 + c] = digits[(r * 3 + r / 3 + c) % 9]
     val puzzle = sol.copyOf()
-    val blanks = (0..80).shuffled(rng).take(44)
-    blanks.forEach { puzzle[it] = 0 }
+    (0..80).shuffled(rng).take(44).forEach { puzzle[it] = 0 }
     return puzzle to sol
 }
 
@@ -211,11 +230,14 @@ fun SudokuScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineC
     var seed by remember(resetSignal) { mutableIntStateOf(config.seed) }
     val (fixedInit, solution) = remember(seed) { generateSudoku(seed) }
     var grid by remember(seed) { mutableStateOf(fixedInit.copyOf()) }
+    var notes by remember(seed) { mutableStateOf(List(81) { emptySet<Int>() }) }
+    var notesMode by remember(seed) { mutableStateOf(false) }
     var selected by remember(seed) { mutableStateOf<Int?>(null) }
     var oppPct by remember(seed) { mutableIntStateOf(0) }
 
     val filledOk = grid.indices.count { grid[it] == solution[it] }
     val won = filledOk == 81
+    val selectedDigit = selected?.let { grid[it] } ?: 0
 
     LaunchedEffect(config.mode) {
         if (config.mode == PlayMode.ONLINE) {
@@ -237,51 +259,81 @@ fun SudokuScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineC
     }
 
     Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             ScorePill("Заполнено", filledOk, Color(0xFF1AA7E3), true)
-            if (config.mode == PlayMode.ONLINE) ScorePill("Соперник", oppPct, PlayBoxColors.OnlinePurple, false)
+            FilterChip(selected = notesMode, onClick = { notesMode = !notesMode }, label = { Text("✏️ Заметки", fontWeight = FontWeight.Bold, maxLines = 1) })
+            if (config.mode == PlayMode.ONLINE) ScorePill("Соп.", oppPct, PlayBoxColors.OnlinePurple, false)
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
-        Column(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Color.White).border(3.dp, PlayBoxColors.DarkInk, RoundedCornerShape(12.dp)).padding(4.dp)) {
-            for (r in 0..8) {
-                Row(Modifier.weight(1f)) {
-                    for (c in 0..8) {
-                        val idx = r * 9 + c
-                        val isFixed = fixedInit[idx] != 0
-                        val v = grid[idx]
-                        val wrong = v != 0 && v != solution[idx]
-                        val boxTint = ((r / 3) + (c / 3)) % 2 == 0
-                        val bg = when {
-                            idx == selected -> Color(0xFFBAE6FD)
-                            wrong -> Color(0xFFFECACA)
-                            boxTint -> Color(0xFFF8FAFC)
-                            else -> Color(0xFFE2E8F0)
-                        }
-                        Box(
-                            Modifier.weight(1f).fillMaxSize().border(0.5.dp, Color(0xFFCBD5E1)).background(bg).clickable(enabled = !isFixed && !won) { selected = idx },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (v != 0) Text("$v", fontWeight = if (isFixed) FontWeight.ExtraBold else FontWeight.Bold, fontSize = 17.sp, color = if (wrong) Color.Red else if (isFixed) PlayBoxColors.DarkInk else Color(0xFF0284C7))
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Color.White).border(3.dp, PlayBoxColors.DarkInk, RoundedCornerShape(12.dp))) {
+            Column(Modifier.fillMaxSize()) {
+                for (r in 0..8) {
+                    Row(Modifier.weight(1f)) {
+                        for (c in 0..8) {
+                            val idx = r * 9 + c
+                            val isFixed = fixedInit[idx] != 0
+                            val v = grid[idx]
+                            val wrong = v != 0 && v != solution[idx]
+                            val boxTint = ((r / 3) + (c / 3)) % 2 == 0
+                            val bg = when {
+                                idx == selected -> Color(0xFF7DD3FC)
+                                selectedDigit > 0 && v == selectedDigit -> Color(0xFFBAE6FD)
+                                wrong -> Color(0xFFFECACA)
+                                boxTint -> Color(0xFFF8FAFC)
+                                else -> Color(0xFFE2E8F0)
+                            }
+                            Box(
+                                Modifier.weight(1f).fillMaxSize().border(0.5.dp, Color(0xFFCBD5E1)).background(bg).clickable(enabled = !won) { selected = idx },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (v != 0) {
+                                    Text("$v", fontWeight = if (isFixed) FontWeight.ExtraBold else FontWeight.Bold, fontSize = 18.sp, color = if (wrong) Color.Red else if (isFixed) PlayBoxColors.DarkInk else Color(0xFF0284C7))
+                                } else if (notes[idx].isNotEmpty()) {
+                                    Text(notes[idx].sorted().joinToString(""), fontSize = 8.sp, lineHeight = 9.sp, color = PlayBoxColors.MutedInk)
+                                }
+                            }
                         }
                     }
                 }
             }
+            // Thick 3x3 subgrid lines
+            Canvas(Modifier.fillMaxSize()) {
+                for (i in 1..2) {
+                    val pos = size.width * i / 3f
+                    drawLine(PlayBoxColors.DarkInk, Offset(pos, 0f), Offset(pos, size.height), 2.5.dp.toPx())
+                    drawLine(PlayBoxColors.DarkInk, Offset(0f, pos), Offset(size.width, pos), 2.5.dp.toPx())
+                }
+            }
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for (n in 1..9) {
                 Box(
                     Modifier.weight(1f).height(46.dp).clip(RoundedCornerShape(10.dp)).background(Color.White).border(2.dp, PlayBoxColors.DarkInk, RoundedCornerShape(10.dp))
-                        .clickable(enabled = selected != null && !won) {
+                        .bounceClick(enabled = selected != null && !won && fixedInit[selected!!] == 0) {
                             val s = selected!!
-                            val next = grid.copyOf().apply { this[s] = n }
-                            grid = next
-                            if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("pct", next.indices.count { next[it] == solution[it] }))
+                            if (notesMode) {
+                                val cur = notes[s]
+                                notes = notes.mapIndexed { i, set -> if (i == s) (if (n in cur) cur - n else cur + n) else set }
+                            } else {
+                                val next = grid.copyOf().apply { this[s] = n }
+                                grid = next
+                                if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("pct", next.indices.count { next[it] == solution[it] }))
+                            }
                         },
                     contentAlignment = Alignment.Center
                 ) { Text("$n", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
             }
+            Box(
+                Modifier.weight(1f).height(46.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFFEE2E2)).border(2.dp, PlayBoxColors.Player1Color, RoundedCornerShape(10.dp))
+                    .bounceClick(enabled = selected != null && !won && fixedInit[selected!!] == 0) {
+                        val s = selected!!
+                        grid = grid.copyOf().apply { this[s] = 0 }
+                        notes = notes.mapIndexed { i, set -> if (i == s) emptySet() else set }
+                    },
+                contentAlignment = Alignment.Center
+            ) { Text("⌫", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = PlayBoxColors.Player1Color) }
         }
         if (won) {
             GameResultBanner("Судоку решено!", "Все 81 клетка верны", config.mode, roomState,
@@ -292,23 +344,24 @@ fun SudokuScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineC
     }
 }
 
-// 14. SHIKAKU (5x5 rectangular partition puzzles)
+// 14. SHIKAKU (Drag-to-select rectangles directly!)
 private data class ShikakuClue(val r: Int, val c: Int, val area: Int)
 private data class ShikakuPuzzle(val size: Int, val clues: List<ShikakuClue>)
 
 private val SHIKAKU_LEVELS = listOf(
     ShikakuPuzzle(5, listOf(ShikakuClue(0, 0, 6), ShikakuClue(0, 3, 4), ShikakuClue(2, 1, 5), ShikakuClue(3, 2, 6), ShikakuClue(4, 0, 4))),
     ShikakuPuzzle(5, listOf(ShikakuClue(0, 1, 8), ShikakuClue(1, 4, 3), ShikakuClue(2, 2, 4), ShikakuClue(4, 0, 6), ShikakuClue(4, 3, 4))),
-    ShikakuPuzzle(5, listOf(ShikakuClue(0, 0, 5), ShikakuClue(1, 2, 6), ShikakuClue(1, 4, 4), ShikakuClue(3, 1, 4), ShikakuClue(4, 3, 6)))
+    ShikakuPuzzle(5, listOf(ShikakuClue(0, 0, 5), ShikakuClue(1, 2, 6), ShikakuClue(1, 4, 4), ShikakuClue(3, 1, 4), ShikakuClue(4, 3, 6))),
+    ShikakuPuzzle(5, listOf(ShikakuClue(0, 0, 4), ShikakuClue(0, 4, 6), ShikakuClue(2, 2, 5), ShikakuClue(4, 1, 4), ShikakuClue(4, 4, 6)))
 )
 
 @Composable
 fun ShikakuScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     var lvlIdx by remember(resetSignal) { mutableIntStateOf(abs(config.seed) % SHIKAKU_LEVELS.size) }
     val puz = SHIKAKU_LEVELS[lvlIdx]
-    // Assign each cell an owner clue index (-1 = unassigned)
     var owners by remember(lvlIdx, resetSignal) { mutableStateOf(IntArray(puz.size * puz.size) { -1 }) }
-    var startCell by remember(lvlIdx, resetSignal) { mutableStateOf<Int?>(null) }
+    var dragStartCell by remember(lvlIdx, resetSignal) { mutableStateOf<Int?>(null) }
+    var dragEndCell by remember(lvlIdx, resetSignal) { mutableStateOf<Int?>(null) }
 
     val won = remember(owners, lvlIdx) {
         if (owners.any { it < 0 }) false
@@ -318,70 +371,87 @@ fun ShikakuScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Online
             else {
                 val rs = cells.map { it / puz.size }; val cs = cells.map { it % puz.size }
                 val rectArea = (rs.max() - rs.min() + 1) * (cs.max() - cs.min() + 1)
-                val clueCell = puz.clues[cIdx].r * puz.size + puz.clues[cIdx].c
-                rectArea == cells.size && clueCell in cells
+                rectArea == cells.size && (puz.clues[cIdx].r * puz.size + puz.clues[cIdx].c) in cells
             }
         }
     }
 
     LaunchedEffect(won) {
-        if (won) {
-            prefs.recordWin(GameId.SHIKAKU)
-            if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex)
-        }
+        if (won) { prefs.recordWin(GameId.SHIKAKU); if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex) }
     }
 
+    fun previewCells(): Set<Int> {
+        val s = dragStartCell ?: return emptySet()
+        val e = dragEndCell ?: s
+        val r1 = minOf(s / puz.size, e / puz.size); val r2 = maxOf(s / puz.size, e / puz.size)
+        val c1 = minOf(s % puz.size, e % puz.size); val c2 = maxOf(s % puz.size, e % puz.size)
+        return (r1..r2).flatMap { rr -> (c1..c2).map { cc -> rr * puz.size + cc } }.toSet()
+    }
+
+    val preview = previewCells()
+
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Нажмите первый угол и второй угол прямоугольника, содержащего одно число (площадь = числу).", fontSize = 13.sp, color = PlayBoxColors.MutedInk)
+        Text("Проведите пальцем прямоугольник с одним числом (площадь = числу).", fontSize = 13.sp, color = PlayBoxColors.MutedInk)
         Spacer(Modifier.height(12.dp))
 
-        Column(Modifier.fillMaxWidth(0.92f).aspectRatio(1f).clip(RoundedCornerShape(16.dp)).background(Color.White).border(3.dp, PlayBoxColors.DarkInk, RoundedCornerShape(16.dp)).padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (r in 0 until puz.size) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    for (c in 0 until puz.size) {
-                        val idx = r * puz.size + c
-                        val own = owners[idx]
-                        val clue = puz.clues.firstOrNull { it.r == r && it.c == c }
-                        val bg = when {
-                            idx == startCell -> PlayBoxColors.BoltGold
-                            own >= 0 -> SORT_PALETTE[own % SORT_PALETTE.size].copy(alpha = 0.72f)
-                            else -> PlayBoxColors.CreamBg
-                        }
-                        Box(
-                            Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(8.dp)).background(bg).clickable(enabled = !won) {
-                                val s = startCell
-                                if (s == null) {
-                                    startCell = idx
-                                } else {
-                                    val r1 = minOf(s / puz.size, r); val r2 = maxOf(s / puz.size, r)
-                                    val c1 = minOf(s % puz.size, c); val c2 = maxOf(s % puz.size, c)
-                                    val rectCells = (r1..r2).flatMap { rr -> (c1..c2).map { cc -> rr * puz.size + cc } }
-                                    val cluesInside = puz.clues.indices.filter { ci -> (puz.clues[ci].r * puz.size + puz.clues[ci].c) in rectCells }
-                                    if (cluesInside.size == 1 && rectCells.size == puz.clues[cluesInside[0]].area) {
-                                        val next = owners.copyOf()
-                                        for (i in next.indices) if (next[i] == cluesInside[0]) next[i] = -1
-                                        rectCells.forEach { next[it] = cluesInside[0] }
-                                        owners = next
-                                    }
-                                    startCell = null
-                                }
-                            },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (clue != null) Text("${clue.area}", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = PlayBoxColors.DarkInk)
+        Box(
+            Modifier.fillMaxWidth(0.92f).aspectRatio(1f).clip(RoundedCornerShape(16.dp)).background(Color.White).border(3.dp, PlayBoxColors.DarkInk, RoundedCornerShape(16.dp)).padding(6.dp)
+                .pointerInput(lvlIdx, won, owners) {
+                    detectDragGestures(
+                        onDragStart = { pos ->
+                            if (won) return@detectDragGestures
+                            val c = ((pos.x / size.width) * puz.size).toInt().coerceIn(0, puz.size - 1)
+                            val r = ((pos.y / size.height) * puz.size).toInt().coerceIn(0, puz.size - 1)
+                            dragStartCell = r * puz.size + c; dragEndCell = r * puz.size + c
+                        },
+                        onDrag = { ch, _ ->
+                            ch.consume()
+                            val c = ((ch.position.x / size.width) * puz.size).toInt().coerceIn(0, puz.size - 1)
+                            val r = ((ch.position.y / size.height) * puz.size).toInt().coerceIn(0, puz.size - 1)
+                            dragEndCell = r * puz.size + c
+                        },
+                        onDragEnd = {
+                            val rectCells = previewCells()
+                            val cluesInside = puz.clues.indices.filter { ci -> (puz.clues[ci].r * puz.size + puz.clues[ci].c) in rectCells }
+                            if (cluesInside.size == 1 && rectCells.size == puz.clues[cluesInside[0]].area) {
+                                val next = owners.copyOf()
+                                for (i in next.indices) if (next[i] == cluesInside[0]) next[i] = -1
+                                rectCells.forEach { next[it] = cluesInside[0] }
+                                owners = next
+                            }
+                            dragStartCell = null; dragEndCell = null
+                        },
+                        onDragCancel = { dragStartCell = null; dragEndCell = null }
+                    )
+                }
+        ) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (r in 0 until puz.size) {
+                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        for (c in 0 until puz.size) {
+                            val idx = r * puz.size + c
+                            val own = owners[idx]
+                            val clue = puz.clues.firstOrNull { it.r == r && it.c == c }
+                            val bg = when {
+                                idx in preview -> PlayBoxColors.BoltGold.copy(alpha = 0.78f)
+                                own >= 0 -> SORT_PALETTE[own % SORT_PALETTE.size].copy(alpha = 0.72f)
+                                else -> PlayBoxColors.CreamBg
+                            }
+                            Box(Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(8.dp)).background(bg), contentAlignment = Alignment.Center) {
+                                if (clue != null) Text("${clue.area}", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = PlayBoxColors.DarkInk)
+                            }
                         }
                     }
                 }
             }
         }
-        Spacer(Modifier.height(10.dp))
-        OutlinedButton(onClick = { owners = IntArray(puz.size * puz.size) { -1 }; startCell = null }) { Text("Сбросить сетку") }
+        Spacer(Modifier.height(12.dp))
+        PlayBoxOutlinedButton(onClick = { owners = IntArray(puz.size * puz.size) { -1 }; dragStartCell = null }) {
+            Text("Сбросить сетку", fontWeight = FontWeight.Bold, maxLines = 1)
+        }
         Spacer(Modifier.weight(1f))
         if (won) {
-            GameResultBanner("Шикаку решено!", "Идеальное разбиение", config.mode, roomState,
-                onRematch = { lvlIdx = (lvlIdx + 1) % SHIKAKU_LEVELS.size },
-                onExit = onExit
-            )
+            GameResultBanner("Шикаку решено!", "Идеальное разбиение", config.mode, roomState, onRematch = { lvlIdx = (lvlIdx + 1) % SHIKAKU_LEVELS.size }, onExit = onExit)
         }
     }
 }
@@ -390,14 +460,10 @@ fun ShikakuScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Online
 @Composable
 fun NumberMatchScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     var seed by remember(resetSignal) { mutableIntStateOf(config.seed) }
-    var cells by remember(seed) {
-        val rng = Random(seed)
-        mutableStateOf(List(27) { rng.nextInt(1, 10) }) // 0 = cleared
-    }
+    var cells by remember(seed) { val rng = Random(seed); mutableStateOf(List(27) { rng.nextInt(1, 10) }) }
     var selectedIdx by remember(seed) { mutableStateOf<Int?>(null) }
     var score by remember(seed) { mutableIntStateOf(0) }
     var oppScore by remember(seed) { mutableIntStateOf(0) }
-
     val won = cells.all { it == 0 }
 
     LaunchedEffect(config.mode) {
@@ -415,7 +481,6 @@ fun NumberMatchScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
         val cols = 9
         val r1 = i / cols; val c1 = i % cols; val r2 = j / cols; val c2 = j % cols
         val dr = r2 - r1; val dc = c2 - c1
-        // linear adjacent ignoring 0s OR grid horizontal/vertical/diagonal adjacent ignoring 0s
         if (abs(dr) <= 1 && abs(dc) <= 1) return true
         val step = when {
             r1 == r2 -> if (c2 > c1) 1 else -1
@@ -425,26 +490,22 @@ fun NumberMatchScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
         }
         if (step != 0) {
             var cur = i + step
-            while (cur != j && cur in cells.indices) {
-                if (cells[cur] != 0) return false
-                cur += step
-            }
+            while (cur != j && cur in cells.indices) { if (cells[cur] != 0) return false; cur += step }
             if (cur == j) return true
         }
-        // Check flat reading order skipping 0s
         val lo = minOf(i, j); val hi = maxOf(i, j)
         return ((lo + 1) until hi).all { cells[it] == 0 }
     }
 
     Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             ScorePill("Очки", score, Color(0xFF00A8E8), true)
-            if (config.mode == PlayMode.ONLINE) ScorePill("Соперник", oppScore, PlayBoxColors.OnlinePurple, false)
-            OutlinedButton(enabled = cells.count { it > 0 } < 45, onClick = {
-                val rem = cells.filter { it != 0 }
-                cells = cells + rem
-                selectedIdx = null
-            }) { Text("+ Добавить") }
+            if (config.mode == PlayMode.ONLINE) ScorePill("Соп.", oppScore, PlayBoxColors.OnlinePurple, false)
+            PlayBoxOutlinedButton(
+                enabled = cells.count { it > 0 } < 45,
+                onClick = { cells = cells + cells.filter { it != 0 }; selectedIdx = null },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            ) { Text("+ Добавить", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
         }
         Spacer(Modifier.height(10.dp))
 
@@ -453,27 +514,23 @@ fun NumberMatchScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
             for (r in 0 until rows) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (c in 0..8) {
-                        val idx = r * 9 + c
-                        val v = cells.getOrElse(idx) { 0 }
+                        val idx = r * 9 + c; val v = cells.getOrElse(idx) { 0 }
                         Box(
                             Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(6.dp))
                                 .background(if (idx == selectedIdx) PlayBoxColors.BoltGold else if (v == 0) Color(0xFFF8FAFC) else Color(0xFFE0F2FE))
-                                .clickable(enabled = v != 0) {
+                                .bounceClick(enabled = v != 0) {
                                     val s = selectedIdx
                                     if (s == null) selectedIdx = idx
                                     else if (s == idx) selectedIdx = null
                                     else if (canPair(s, idx)) {
                                         cells = cells.mapIndexed { k, old -> if (k == s || k == idx) 0 else old }
-                                        score += 10
-                                        selectedIdx = null
+                                        score += 10; selectedIdx = null
                                         if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("score", score))
                                         if (cells.all { it == 0 }) prefs.recordWin(GameId.NUMBER_MATCH)
                                     } else selectedIdx = idx
                                 },
                             contentAlignment = Alignment.Center
-                        ) {
-                            if (v != 0) Text("$v", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = PlayBoxColors.DarkInk)
-                        }
+                        ) { if (v != 0) Text("$v", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = PlayBoxColors.DarkInk) }
                     }
                 }
             }
@@ -497,31 +554,20 @@ fun CrossSumsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
         val rng = Random(seed)
         val nums = IntArray(size * size) { rng.nextInt(1, 10) }
         val mask = BooleanArray(size * size) { rng.nextBoolean() }
-        // ensure every row & col has at least 1 active
-        for (i in 0 until size) {
-            if ((0 until size).none { mask[i * size + it] }) mask[i * size + i] = true
-        }
+        for (i in 0 until size) if ((0 until size).none { mask[i * size + it] }) mask[i * size + i] = true
         nums to mask
     }
     var selectedMask by remember(seed) { mutableStateOf(BooleanArray(size * size)) }
     val rowTargets = remember(seed) { IntArray(size) { r -> (0 until size).filter { solutionMask[r * size + it] }.sumOf { numbers[r * size + it] } } }
     val colTargets = remember(seed) { IntArray(size) { c -> (0 until size).filter { solutionMask[it * size + c] }.sumOf { numbers[it * size + c] } } }
 
-    val won = (0 until size).all { r ->
-        (0 until size).filter { selectedMask[r * size + it] }.sumOf { numbers[r * size + it] } == rowTargets[r]
-    } && (0 until size).all { c ->
-        (0 until size).filter { selectedMask[it * size + c] }.sumOf { numbers[it * size + c] } == colTargets[c]
-    }
+    val won = (0 until size).all { r -> (0 until size).filter { selectedMask[r * size + it] }.sumOf { numbers[r * size + it] } == rowTargets[r] } &&
+        (0 until size).all { c -> (0 until size).filter { selectedMask[it * size + c] }.sumOf { numbers[it * size + c] } == colTargets[c] }
 
-    LaunchedEffect(won) {
-        if (won) {
-            prefs.recordWin(GameId.CROSS_SUMS)
-            if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex)
-        }
-    }
+    LaunchedEffect(won) { if (won) { prefs.recordWin(GameId.CROSS_SUMS); if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex) } }
 
     Column(Modifier.fillMaxSize().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Выделите числа так, чтобы суммы по всем строкам и столбцам совпали с целями.", fontSize = 13.sp, color = PlayBoxColors.MutedInk)
+        Text("Отметьте числа так, чтобы суммы в строках и столбцах совпали с целями.", fontSize = 13.sp, color = PlayBoxColors.MutedInk)
         Spacer(Modifier.height(12.dp))
 
         Column(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(16.dp)).background(Color(0xFF00B4E6)).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -541,12 +587,11 @@ fun CrossSumsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
                         Text("${rowTargets[r]}", color = Color.White, fontWeight = FontWeight.ExtraBold)
                     }
                     for (c in 0 until size) {
-                        val idx = r * size + c
-                        val on = selectedMask[idx]
+                        val idx = r * size + c; val on = selectedMask[idx]
                         Box(
                             Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(8.dp))
                                 .background(if (on) Color(0xFFFFCA3A) else Color.White)
-                                .clickable(enabled = !won) { selectedMask = selectedMask.copyOf().apply { this[idx] = !this[idx] } },
+                                .bounceClick(enabled = !won) { selectedMask = selectedMask.copyOf().apply { this[idx] = !this[idx] } },
                             Alignment.Center
                         ) { Text("${numbers[idx]}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = PlayBoxColors.DarkInk) }
                     }
@@ -563,17 +608,22 @@ fun CrossSumsScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
     }
 }
 
-// 17. CONNECT 2248 (Drag chain of powers of 2)
+// 17. CONNECT 2248 (With glowing connector line + live merge preview)
 @Composable
 fun Connect2248Screen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     val rows = 6; val cols = 5
-    var grid by remember(resetSignal) {
-        val rng = Random(config.seed)
-        mutableStateOf(IntArray(rows * cols) { listOf(2, 4, 8, 16).random(rng) })
-    }
+    var grid by remember(resetSignal) { val rng = Random(config.seed); mutableStateOf(IntArray(rows * cols) { listOf(2, 4, 8, 16).random(rng) }) }
     var chain by remember(resetSignal) { mutableStateOf<List<Int>>(emptyList()) }
     var score by remember(resetSignal) { mutableIntStateOf(0) }
     var oppScore by remember(resetSignal) { mutableIntStateOf(0) }
+
+    val previewMerged = remember(chain, grid) {
+        if (chain.size < 2) null else {
+            val total = chain.sumOf { grid[it] }
+            var merged = 2; while (merged * 2 <= total) merged *= 2
+            merged
+        }
+    }
 
     LaunchedEffect(config.mode) {
         if (config.mode == PlayMode.ONLINE) {
@@ -589,15 +639,12 @@ fun Connect2248Screen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
     }
 
     fun finishChain() {
-        if (chain.size >= 2) {
-            val total = chain.sumOf { grid[it] }
-            var merged = 2
-            while (merged * 2 <= total) merged *= 2
+        val merged = previewMerged
+        if (merged != null && chain.size >= 2) {
             val next = grid.copyOf()
             chain.dropLast(1).forEach { next[it] = listOf(2, 4, 8, 16).random() }
             next[chain.last()] = merged
-            grid = next
-            score += merged
+            grid = next; score += merged
             prefs.updateBestScore(GameId.CONNECT_2248, score)
             if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("score", score))
         }
@@ -605,12 +652,17 @@ fun Connect2248Screen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF283B4A)).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             ScorePill("Счёт", score, Color(0xFF2EC4B6), true)
-            if (config.mode == PlayMode.ONLINE) ScorePill("Соперник", oppScore, PlayBoxColors.OnlinePurple, false)
+            if (previewMerged != null) {
+                Surface(shape = RoundedCornerShape(14.dp), color = PlayBoxColors.BoltGold) {
+                    Text("→ $previewMerged", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = PlayBoxColors.DarkInk, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                }
+            }
+            if (config.mode == PlayMode.ONLINE) ScorePill("Соп.", oppScore, PlayBoxColors.OnlinePurple, false)
         }
         Spacer(Modifier.height(10.dp))
-        Text("Проведите пальцем по одинаковым плиткам (и удвоениям) для слияния", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+        Text("Тяните палец по одинаковым плиткам (и удвоениям) для слияния", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
         Spacer(Modifier.height(12.dp))
 
         Box(
@@ -630,8 +682,7 @@ fun Connect2248Screen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
                             val r = ((pos.y / size.height) * rows).toInt().coerceIn(0, rows - 1)
                             val idx = r * cols + c
                             if (chain.isNotEmpty() && idx !in chain) {
-                                val last = chain.last()
-                                val lr = last / cols; val lc = last % cols
+                                val last = chain.last(); val lr = last / cols; val lc = last % cols
                                 val adj = abs(lr - r) <= 1 && abs(lc - c) <= 1
                                 val valOk = grid[idx] == grid[last] || (chain.size >= 2 && grid[idx] == grid[last] * 2)
                                 if (adj && valOk) chain = chain + idx
@@ -646,9 +697,7 @@ fun Connect2248Screen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
                 for (r in 0 until rows) {
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (c in 0 until cols) {
-                            val idx = r * cols + c
-                            val v = grid[idx]
-                            val sel = idx in chain
+                            val idx = r * cols + c; val v = grid[idx]; val sel = idx in chain
                             Box(
                                 Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(12.dp))
                                     .background(SORT_PALETTE[(Integer.numberOfTrailingZeros(v.coerceAtLeast(2)) - 1) % SORT_PALETTE.size])
@@ -659,11 +708,25 @@ fun Connect2248Screen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: On
                     }
                 }
             }
+            if (chain.size >= 2) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val cw = size.width / cols; val ch = size.height / rows
+                    for (i in 0 until chain.lastIndex) {
+                        val a = chain[i]; val b = chain[i + 1]
+                        drawLine(
+                            Color.White.copy(alpha = 0.85f),
+                            Offset((a % cols + 0.5f) * cw, (a / cols + 0.5f) * ch),
+                            Offset((b % cols + 0.5f) * cw, (b / cols + 0.5f) * ch),
+                            strokeWidth = 6.dp.toPx(), cap = StrokeCap.Round
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
-// 18. DROP MERGE (5-column 2048 drop)
+// 18. DROP MERGE
 @Composable
 fun DropMergeScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     val rows = 7; val cols = 5
@@ -675,43 +738,29 @@ fun DropMergeScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
 
     LaunchedEffect(config.mode) {
         if (config.mode == PlayMode.ONLINE) {
-            onlineClient.events.collect { ev ->
-                if (ev is OnlineEvent.OpponentState) oppScore = ev.payload.optInt("score", oppScore)
-            }
+            onlineClient.events.collect { ev -> if (ev is OnlineEvent.OpponentState) oppScore = ev.payload.optInt("score", oppScore) }
         }
     }
 
     fun dropInCol(c: Int) {
         if (gameOver) return
         val r = (rows - 1 downTo 0).firstOrNull { grid[it * cols + c] == 0 } ?: return
-        val next = grid.copyOf()
-        next[r * cols + c] = nextBlock
-        // Cascade merges vertically & horizontally
+        val next = grid.copyOf(); next[r * cols + c] = nextBlock
         var mergedAny = true
         while (mergedAny) {
             mergedAny = false
-            for (col in 0 until cols) {
-                for (row in rows - 1 downTo 1) {
-                    val v = next[row * cols + col]
-                    if (v > 0 && next[(row - 1) * cols + col] == v) {
-                        next[row * cols + col] = v * 2
-                        next[(row - 1) * cols + col] = 0
-                        score += v * 2
-                        mergedAny = true
-                    }
+            for (col in 0 until cols) for (row in rows - 1 downTo 1) {
+                val v = next[row * cols + col]
+                if (v > 0 && next[(row - 1) * cols + col] == v) {
+                    next[row * cols + col] = v * 2; next[(row - 1) * cols + col] = 0; score += v * 2; mergedAny = true
                 }
             }
-            // gravity
             for (col in 0 until cols) {
                 val nonZero = (rows - 1 downTo 0).map { next[it * cols + col] }.filter { it > 0 }
-                for (row in 0 until rows) {
-                    val idxFromBottom = rows - 1 - row
-                    next[row * cols + col] = nonZero.getOrElse(idxFromBottom) { 0 }
-                }
+                for (row in 0 until rows) next[row * cols + col] = nonZero.getOrElse(rows - 1 - row) { 0 }
             }
         }
-        grid = next
-        nextBlock = listOf(2, 4, 8, 16, 32).random()
+        grid = next; nextBlock = listOf(2, 4, 8, 16, 32).random()
         prefs.updateBestScore(GameId.DROP_MERGE, score)
         if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("score", score))
         if ((0 until cols).all { next[it] != 0 }) gameOver = true
@@ -720,7 +769,7 @@ fun DropMergeScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
     Column(Modifier.fillMaxSize().background(Color(0xFF33363F)).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             ScorePill("Счёт", score, Color(0xFF6BCB77), true)
-            ScorePill("Блок", nextBlock, PlayBoxColors.BoltGold, false)
+            ScorePill("След.", nextBlock, PlayBoxColors.BoltGold, false)
             if (config.mode == PlayMode.ONLINE) ScorePill("Соп.", oppScore, PlayBoxColors.OnlinePurple, false)
         }
         Spacer(Modifier.height(10.dp))
@@ -730,11 +779,11 @@ fun DropMergeScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
                     for (c in 0 until cols) {
                         val v = grid[r * cols + c]
                         Box(
-                            Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(8.dp))
+                            Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(10.dp))
                                 .background(if (v == 0) Color(0xFF2E323C) else SORT_PALETTE[(Integer.numberOfTrailingZeros(v.coerceAtLeast(2)) - 1) % SORT_PALETTE.size])
                                 .clickable(enabled = !gameOver) { dropInCol(c) },
                             Alignment.Center
-                        ) { if (v > 0) Text("$v", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp) }
+                        ) { if (v > 0) Text("$v", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
                     }
                 }
             }
@@ -748,7 +797,7 @@ fun DropMergeScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: Onli
     }
 }
 
-// 19. SLIDING PUZZLE (15-puzzle 4x4 & 3x3)
+// 19. SLIDING PUZZLE
 @Composable
 fun SlidingPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     var size by remember { mutableIntStateOf(4) }
@@ -756,14 +805,11 @@ fun SlidingPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: 
 
     fun makeSolvable(n: Int, s: Int): IntArray {
         val arr = IntArray(n * n) { if (it == n * n - 1) 0 else it + 1 }
-        val rng = Random(s)
-        var empty = n * n - 1
+        val rng = Random(s); var empty = n * n - 1
         repeat(160) {
             val r = empty / n; val c = empty % n
             val nb = listOf(r - 1 to c, r + 1 to c, r to c - 1, r to c + 1)
-                .filter { (nr, nc) -> nr in 0 until n && nc in 0 until n }
-                .map { (nr, nc) -> nr * n + nc }
-                .random(rng)
+                .filter { (nr, nc) -> nr in 0 until n && nc in 0 until n }.map { (nr, nc) -> nr * n + nc }.random(rng)
             arr[empty] = arr[nb]; arr[nb] = 0; empty = nb
         }
         return arr
@@ -773,17 +819,12 @@ fun SlidingPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: 
     var moves by remember(size, seed) { mutableIntStateOf(0) }
     val won = tiles.indices.all { i -> if (i == tiles.lastIndex) tiles[i] == 0 else tiles[i] == i + 1 }
 
-    LaunchedEffect(won) {
-        if (won) {
-            prefs.recordWin(GameId.SLIDING_PUZZLE)
-            if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex)
-        }
-    }
+    LaunchedEffect(won) { if (won) { prefs.recordWin(GameId.SLIDING_PUZZLE); if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex) } }
 
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = size == 3, onClick = { size = 3 }, label = { Text("3×3") })
-            FilterChip(selected = size == 4, onClick = { size = 4 }, label = { Text("4×4") })
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FilterChip(selected = size == 3, onClick = { size = 3 }, label = { Text("3×3", fontWeight = FontWeight.Bold, maxLines = 1) })
+            FilterChip(selected = size == 4, onClick = { size = 4 }, label = { Text("4×4", fontWeight = FontWeight.Bold, maxLines = 1) })
             ScorePill("Ходы", moves, PlayBoxColors.Player2Color, true)
         }
         Spacer(Modifier.height(16.dp))
@@ -791,17 +832,14 @@ fun SlidingPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: 
             for (r in 0 until size) {
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (c in 0 until size) {
-                        val idx = r * size + c
-                        val v = tiles[idx]
+                        val idx = r * size + c; val v = tiles[idx]
                         Box(
                             Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(12.dp))
                                 .background(if (v == 0) Color(0xFF1F3847) else Color(0xFFF4A261))
-                                .clickable(enabled = v != 0 && !won) {
-                                    val empty = tiles.indexOfFirst { it == 0 }
-                                    val er = empty / size; val ec = empty % size
+                                .bounceClick(enabled = v != 0 && !won) {
+                                    val empty = tiles.indexOfFirst { it == 0 }; val er = empty / size; val ec = empty % size
                                     if (abs(er - r) + abs(ec - c) == 1) {
-                                        tiles = tiles.copyOf().apply { this[empty] = v; this[idx] = 0 }
-                                        moves += 1
+                                        tiles = tiles.copyOf().apply { this[empty] = v; this[idx] = 0 }; moves += 1
                                     }
                                 },
                             contentAlignment = Alignment.Center
@@ -812,27 +850,21 @@ fun SlidingPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: 
         }
         Spacer(Modifier.weight(1f))
         if (won) {
-            GameResultBanner("Собрано за $moves ходов!", "Отлично!", config.mode, roomState,
-                onRematch = { seed = Random.nextInt(100000) },
-                onExit = onExit
-            )
+            GameResultBanner("Собрано за $moves ходов!", "Отлично!", config.mode, roomState, onRematch = { seed = Random.nextInt(100000) }, onExit = onExit)
         }
     }
 }
 
-// 20. ARROWS PUZZLE (Tap Away / Unblock arrows)
+// 20. ARROWS PUZZLE (Vector Arrows on Canvas)
 @Composable
 fun ArrowsPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: OnlineClient, roomState: OnlineRoomState?, resetSignal: Int, onExit: () -> Unit) {
     val size = 5
     var level by remember(resetSignal) { mutableIntStateOf(1) }
 
-    // 0=empty, 1=UP, 2=RIGHT, 3=DOWN, 4=LEFT
     fun generateClearable(lvl: Int): IntArray {
         val rng = Random(config.seed + lvl * 17)
         val arr = IntArray(size * size)
-        val order = (0 until size * size).shuffled(rng)
-        // Build backwards by picking a cell that currently has at least one clear direction to edge
-        for (cell in order) {
+        for (cell in (0 until size * size).shuffled(rng)) {
             val r = cell / size; val c = cell % size
             val clearDirs = mutableListOf<Int>()
             if ((0 until r).all { arr[it * size + c] == 0 }) clearDirs.add(1)
@@ -848,15 +880,11 @@ fun ArrowsPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: O
     val won = board.all { it == 0 }
 
     LaunchedEffect(won) {
-        if (won) {
-            prefs.recordWin(GameId.ARROWS_PUZZLE)
-            if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("lvl", level + 1))
-        }
+        if (won) { prefs.recordWin(GameId.ARROWS_PUZZLE); if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("lvl", level + 1)) }
     }
 
     fun canFlyOut(idx: Int): Boolean {
-        val d = board[idx]
-        if (d == 0) return false
+        val d = board[idx]; if (d == 0) return false
         val r = idx / size; val c = idx % size
         return when (d) {
             1 -> (0 until r).all { board[it * size + c] == 0 }
@@ -870,34 +898,40 @@ fun ArrowsPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: O
     Column(Modifier.fillMaxSize().background(Color(0xFFD8EFF7)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         ScorePill("Уровень", level, Color(0xFF0096C7), true)
         Spacer(Modifier.height(10.dp))
-        Text("Нажимайте на стрелки, которым ничего не мешает вылететь с поля.", fontSize = 13.sp, color = PlayBoxColors.DarkInk)
+        Text("Нажимайте на стрелки со свободным путём до края поля.", fontSize = 13.sp, color = PlayBoxColors.DarkInk)
         Spacer(Modifier.height(16.dp))
 
-        val glyphs = listOf("", "⬆️", "➡️", "⬇️", "⬅️")
         Column(Modifier.fillMaxWidth(0.9f).aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(Color.White).border(3.dp, PlayBoxColors.DarkInk, RoundedCornerShape(18.dp)).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (r in 0 until size) {
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (c in 0 until size) {
-                        val idx = r * size + c
-                        val d = board[idx]
+                        val idx = r * size + c; val d = board[idx]
                         Box(
                             Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(10.dp))
                                 .background(if (d == 0) Color(0xFFF1F5F9) else Color(0xFFBAE6FD))
-                                .clickable(enabled = d != 0) {
-                                    if (canFlyOut(idx)) board = board.copyOf().apply { this[idx] = 0 }
-                                },
+                                .bounceClick(enabled = d != 0) { if (canFlyOut(idx)) board = board.copyOf().apply { this[idx] = 0 } },
                             contentAlignment = Alignment.Center
-                        ) { if (d != 0) Text(glyphs[d], fontSize = 24.sp) }
+                        ) {
+                            if (d != 0) {
+                                Canvas(Modifier.fillMaxSize(0.55f)) {
+                                    val col = Color(0xFF0369A1); val st = 4.dp.toPx()
+                                    val cx = size.width / 2f; val cy = size.height / 2f
+                                    when (d) {
+                                        1 -> { drawLine(col, Offset(cx, size.height), Offset(cx, 0f), st, StrokeCap.Round); drawLine(col, Offset(cx, 0f), Offset(cx - 8.dp.toPx(), 10.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(cx, 0f), Offset(cx + 8.dp.toPx(), 10.dp.toPx()), st, StrokeCap.Round) }
+                                        2 -> { drawLine(col, Offset(0f, cy), Offset(size.width, cy), st, StrokeCap.Round); drawLine(col, Offset(size.width, cy), Offset(size.width - 10.dp.toPx(), cy - 8.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(size.width, cy), Offset(size.width - 10.dp.toPx(), cy + 8.dp.toPx()), st, StrokeCap.Round) }
+                                        3 -> { drawLine(col, Offset(cx, 0f), Offset(cx, size.height), st, StrokeCap.Round); drawLine(col, Offset(cx, size.height), Offset(cx - 8.dp.toPx(), size.height - 10.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(cx, size.height), Offset(cx + 8.dp.toPx(), size.height - 10.dp.toPx()), st, StrokeCap.Round) }
+                                        4 -> { drawLine(col, Offset(size.width, cy), Offset(0f, cy), st, StrokeCap.Round); drawLine(col, Offset(0f, cy), Offset(10.dp.toPx(), cy - 8.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(0f, cy), Offset(10.dp.toPx(), cy + 8.dp.toPx()), st, StrokeCap.Round) }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
         Spacer(Modifier.weight(1f))
         if (won) {
-            GameResultBanner("Поле свободно!", "Все указатели вылетели", config.mode, roomState,
-                onRematch = { level += 1 },
-                onExit = onExit
-            )
+            GameResultBanner("Поле свободно!", "Все указатели вылетели", config.mode, roomState, onRematch = { level += 1 }, onExit = onExit)
         }
     }
 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,12 +15,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,13 +44,15 @@ import com.playbox.games.network.OnlineClient
 import com.playbox.games.network.OnlineEvent
 import com.playbox.games.network.OnlineRoomState
 import com.playbox.games.ui.components.GameResultBanner
+import com.playbox.games.ui.components.PlayBoxButton
+import com.playbox.games.ui.components.PlayBoxOutlinedButton
 import com.playbox.games.ui.theme.PlayBoxColors
+import com.playbox.games.ui.theme.bounceClick
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import kotlin.random.Random
 
 data class PlayingCard(val suit: Int, val rank: Int, val faceUp: Boolean = true) {
-    // suit: 0=♠, 1=♥, 2=♣, 3=♦; rank: 1..13
     val isRed: Boolean get() = suit == 1 || suit == 3
     val suitSymbol: String get() = listOf("♠", "♥", "♣", "♦")[suit]
     val rankLabel: String get() = when (rank) {
@@ -68,35 +70,60 @@ private fun CardChip(
     selected: Boolean = false,
     faceDown: Boolean = false,
     placeholder: String = "",
-    modifier: Modifier = Modifier.size(width = 44.dp, height = 60.dp),
+    modifier: Modifier = Modifier.size(width = 46.dp, height = 64.dp),
     onClick: () -> Unit = {}
 ) {
     val bg = when {
-        card == null -> Color.White.copy(alpha = 0.22f)
+        card == null -> Color.White.copy(alpha = 0.20f)
         faceDown || !card.faceUp -> Color(0xFF1D3557)
-        else -> Color.White
+        else -> Color(0xFFFFFDF8)
     }
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(9.dp))
             .background(bg)
             .border(
                 if (selected) 3.dp else 1.5.dp,
                 if (selected) PlayBoxColors.BoltGold else Color(0xFF1E293B),
-                RoundedCornerShape(8.dp)
+                RoundedCornerShape(9.dp)
             )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
+            .clickable(onClick = onClick)
+            .padding(3.dp)
     ) {
         when {
-            card == null -> Text(placeholder, color = Color.White.copy(alpha = 0.7f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            faceDown || !card.faceUp -> Text("★", color = Color(0xFFA8DADC), fontSize = 16.sp)
-            else -> Text(
-                card.label,
-                color = if (card.isRed) Color(0xFFD62828) else Color(0xFF1E293B),
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 14.sp
-            )
+            card == null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                Text(placeholder, color = Color.White.copy(alpha = 0.78f), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+            }
+            faceDown || !card.faceUp -> Box(
+                Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)).background(
+                    Brush.linearGradient(listOf(Color(0xFF1D3557), Color(0xFF457B9D)))
+                ),
+                Alignment.Center
+            ) {
+                Text("❖", color = Color(0xFFA8DADC), fontSize = 18.sp)
+            }
+            else -> {
+                val ink = if (card.isRed) Color(0xFFD62828) else Color(0xFF1E293B)
+                Text(
+                    text = card.rankLabel,
+                    color = ink,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 11.sp,
+                    modifier = Modifier.align(Alignment.TopStart)
+                )
+                Text(
+                    text = card.suitSymbol,
+                    color = ink,
+                    fontSize = 17.sp,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                Text(
+                    text = card.suitSymbol,
+                    color = ink,
+                    fontSize = 10.sp,
+                    modifier = Modifier.align(Alignment.BottomEnd)
+                )
+            }
         }
     }
 }
@@ -113,20 +140,13 @@ fun SolitaireScreen(
 ) {
     var seed by remember(resetSignal) { mutableIntStateOf(config.seed) }
     var tableau by remember(seed) {
-        val deck = shuffledDeck(seed)
-        var idx = 0
-        val cols = List(7) { c ->
-            MutableList(c + 1) { r -> deck[idx++].copy(faceUp = r == c) }.toList()
-        }
-        mutableStateOf(cols)
+        val deck = shuffledDeck(seed); var idx = 0
+        mutableStateOf(List(7) { c -> List(c + 1) { r -> deck[idx++].copy(faceUp = r == c) } })
     }
-    var stock by remember(seed) {
-        val deck = shuffledDeck(seed)
-        mutableStateOf(deck.drop(28))
-    }
+    var stock by remember(seed) { mutableStateOf(shuffledDeck(seed).drop(28)) }
     var waste by remember(seed) { mutableStateOf<List<PlayingCard>>(emptyList()) }
     var foundations by remember(seed) { mutableStateOf(List(4) { emptyList<PlayingCard>() }) }
-    var selectedSource by remember(seed) { mutableStateOf<Pair<String, Int>?>(null) } // "waste",-1 or "tab",col
+    var selectedSource by remember(seed) { mutableStateOf<Pair<String, Int>?>(null) }
     var oppFoundations by remember(seed) { mutableIntStateOf(0) }
 
     val totalFound = foundations.sumOf { it.size }
@@ -138,9 +158,7 @@ fun SolitaireScreen(
             prefs.recordWin(GameId.SOLITAIRE)
             if (config.mode == PlayMode.ONLINE) onlineClient.sendGameOver(config.playerIndex)
         }
-        if (config.mode == PlayMode.ONLINE) {
-            onlineClient.sendState(JSONObject().put("found", cnt))
-        }
+        if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("found", cnt))
     }
 
     LaunchedEffect(config.mode) {
@@ -160,16 +178,13 @@ fun SolitaireScreen(
         val expected = (f.lastOrNull()?.rank ?: 0) + 1
         if (card.rank == expected) {
             val nextF = foundations.mapIndexed { i, list -> if (i == card.suit) list + card else list }
-            foundations = nextF
-            syncOnline(nextF)
-            return true
+            foundations = nextF; syncOnline(nextF); return true
         }
         return false
     }
 
     fun tryMoveCardsToCol(cards: List<PlayingCard>, targetCol: Int): Boolean {
-        val dest = tableau[targetCol]
-        val lead = cards.first()
+        val dest = tableau[targetCol]; val lead = cards.first()
         val ok = if (dest.isEmpty()) lead.rank == 13 else {
             val top = dest.last()
             top.faceUp && top.isRed != lead.isRed && top.rank == lead.rank + 1
@@ -180,26 +195,21 @@ fun SolitaireScreen(
     }
 
     fun revealTops(cols: List<List<PlayingCard>>): List<List<PlayingCard>> =
-        cols.map { col ->
-            if (col.isNotEmpty() && !col.last().faceUp) col.dropLast(1) + col.last().copy(faceUp = true) else col
-        }
+        cols.map { col -> if (col.isNotEmpty() && !col.last().faceUp) col.dropLast(1) + col.last().copy(faceUp = true) else col }
 
     Column(
         modifier = Modifier.fillMaxSize().background(Color(0xFF137534)).padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("В доме: $totalFound/52", color = Color.White, fontWeight = FontWeight.ExtraBold)
-            if (config.mode == PlayMode.ONLINE) Text("Соп: $oppFoundations/52", color = Color(0xFFFFCA3A), fontWeight = FontWeight.Bold)
-            OutlinedButton(
+            ScorePill("В доме", totalFound, Color(0xFF0A4F22), true)
+            if (config.mode == PlayMode.ONLINE) ScorePill("Соп.", oppFoundations, PlayBoxColors.OnlinePurple, false)
+            PlayBoxOutlinedButton(
                 onClick = {
-                    // Auto-send available top cards to foundation
                     var changed = true
                     while (changed) {
                         changed = false
-                        waste.lastOrNull()?.let { c ->
-                            if (tryMoveToFoundation(c)) { waste = waste.dropLast(1); changed = true }
-                        }
+                        waste.lastOrNull()?.let { c -> if (tryMoveToFoundation(c)) { waste = waste.dropLast(1); changed = true } }
                         for (col in 0..6) {
                             val c = tableau[col].lastOrNull()
                             if (c != null && c.faceUp && tryMoveToFoundation(c)) {
@@ -209,42 +219,31 @@ fun SolitaireScreen(
                         }
                     }
                 },
-                shape = RoundedCornerShape(10.dp)
-            ) { Text("Авто", color = Color.White, fontWeight = FontWeight.Bold) }
+                contentColor = Color.White,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) { Text("⚡ Автосбор", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
         }
 
         Spacer(Modifier.height(8.dp))
 
-        // Stock, Waste, Foundations
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CardChip(
-                    card = stock.lastOrNull(),
-                    faceDown = stock.isNotEmpty(),
-                    placeholder = "↻",
+                    card = stock.lastOrNull(), faceDown = stock.isNotEmpty(), placeholder = "↻",
                     onClick = {
                         selectedSource = null
-                        if (stock.isNotEmpty()) {
-                            waste = waste + stock.first()
-                            stock = stock.drop(1)
-                        } else if (waste.isNotEmpty()) {
-                            stock = waste
-                            waste = emptyList()
-                        }
+                        if (stock.isNotEmpty()) { waste = waste + stock.first(); stock = stock.drop(1) }
+                        else if (waste.isNotEmpty()) { stock = waste; waste = emptyList() }
                     }
                 )
                 CardChip(
-                    card = waste.lastOrNull(),
-                    selected = selectedSource?.first == "waste",
-                    placeholder = "",
+                    card = waste.lastOrNull(), selected = selectedSource?.first == "waste",
                     onClick = {
                         val wCard = waste.lastOrNull() ?: return@CardChip
                         if (selectedSource?.first == "waste") {
                             if (tryMoveToFoundation(wCard)) waste = waste.dropLast(1)
                             selectedSource = null
-                        } else {
-                            selectedSource = "waste" to -1
-                        }
+                        } else selectedSource = "waste" to -1
                     }
                 )
             }
@@ -252,16 +251,14 @@ fun SolitaireScreen(
                 val suits = listOf("♠", "♥", "♣", "♦")
                 for (s in 0..3) {
                     CardChip(
-                        card = foundations[s].lastOrNull(),
-                        placeholder = suits[s],
+                        card = foundations[s].lastOrNull(), placeholder = suits[s],
                         onClick = {
                             val sel = selectedSource ?: return@CardChip
                             if (sel.first == "waste") {
                                 val c = waste.lastOrNull()
                                 if (c != null && c.suit == s && tryMoveToFoundation(c)) waste = waste.dropLast(1)
                             } else if (sel.first == "tab") {
-                                val col = sel.second
-                                val c = tableau[col].lastOrNull()
+                                val col = sel.second; val c = tableau[col].lastOrNull()
                                 if (c != null && c.suit == s && tryMoveToFoundation(c)) {
                                     tableau = revealTops(tableau.mapIndexed { i, l -> if (i == col) l.dropLast(1) else l })
                                 }
@@ -275,56 +272,41 @@ fun SolitaireScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        // 7 Tableau columns
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for (col in 0..6) {
                 val pile = tableau[col]
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize()
-                        .clickable {
-                            val sel = selectedSource ?: return@clickable
-                            if (pile.isEmpty()) {
-                                if (sel.first == "waste") {
-                                    val c = waste.lastOrNull()
-                                    if (c != null && tryMoveCardsToCol(listOf(c), col)) waste = waste.dropLast(1)
-                                } else if (sel.first == "tab" && sel.second != col) {
-                                    val src = tableau[sel.second]
-                                    val firstFaceUp = src.indexOfFirst { it.faceUp }
-                                    if (firstFaceUp >= 0) {
-                                        val moving = src.subList(firstFaceUp, src.size)
-                                        if (tryMoveCardsToCol(moving, col)) {
-                                            tableau = revealTops(tableau.mapIndexed { i, l -> if (i == sel.second) l.take(firstFaceUp) else l })
-                                        }
-                                    }
+                    modifier = Modifier.weight(1f).fillMaxSize().clickable {
+                        val sel = selectedSource ?: return@clickable
+                        if (pile.isEmpty()) {
+                            if (sel.first == "waste") {
+                                val c = waste.lastOrNull()
+                                if (c != null && tryMoveCardsToCol(listOf(c), col)) waste = waste.dropLast(1)
+                            } else if (sel.first == "tab" && sel.second != col) {
+                                val src = tableau[sel.second]; val firstFaceUp = src.indexOfFirst { it.faceUp }
+                                if (firstFaceUp >= 0 && tryMoveCardsToCol(src.subList(firstFaceUp, src.size), col)) {
+                                    tableau = revealTops(tableau.mapIndexed { i, l -> if (i == sel.second) l.take(firstFaceUp) else l })
                                 }
-                                selectedSource = null
                             }
-                        },
+                            selectedSource = null
+                        }
+                    },
                     verticalArrangement = Arrangement.spacedBy((-36).dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (pile.isEmpty()) {
-                        CardChip(null, placeholder = "K", modifier = Modifier.fillMaxWidth().height(54.dp))
+                        CardChip(null, placeholder = "K", modifier = Modifier.fillMaxWidth().height(56.dp))
                     } else {
-                        pile.forEachIndexed { rIdx, card ->
+                        pile.forEach { card ->
                             val isSelected = selectedSource?.first == "tab" && selectedSource?.second == col && card.faceUp
                             CardChip(
-                                card = card,
-                                selected = isSelected,
-                                modifier = Modifier.fillMaxWidth().height(54.dp),
+                                card = card, selected = isSelected, modifier = Modifier.fillMaxWidth().height(56.dp),
                                 onClick = {
                                     if (!card.faceUp) return@CardChip
                                     val sel = selectedSource
-                                    if (sel == null) {
-                                        selectedSource = "tab" to col
-                                    } else if (sel.first == "tab" && sel.second == col) {
-                                        // second tap: try foundation
-                                        val top = pile.last()
-                                        if (tryMoveToFoundation(top)) {
-                                            tableau = revealTops(tableau.mapIndexed { i, l -> if (i == col) l.dropLast(1) else l })
-                                        }
+                                    if (sel == null) selectedSource = "tab" to col
+                                    else if (sel.first == "tab" && sel.second == col) {
+                                        if (tryMoveToFoundation(pile.last())) tableau = revealTops(tableau.mapIndexed { i, l -> if (i == col) l.dropLast(1) else l })
                                         selectedSource = null
                                     } else if (sel.first == "waste") {
                                         val c = waste.lastOrNull()
@@ -332,11 +314,9 @@ fun SolitaireScreen(
                                         selectedSource = null
                                     } else if (sel.first == "tab") {
                                         val src = tableau[sel.second]
-                                        // try moving faceUp tail from matching card or all faceUp
                                         val startIdx = src.indexOfFirst { it.faceUp }.coerceAtLeast(0)
                                         for (sIdx in startIdx until src.size) {
-                                            val moving = src.subList(sIdx, src.size)
-                                            if (tryMoveCardsToCol(moving, col)) {
+                                            if (tryMoveCardsToCol(src.subList(sIdx, src.size), col)) {
                                                 tableau = revealTops(tableau.mapIndexed { i, l -> if (i == sel.second) l.take(sIdx) else l })
                                                 break
                                             }
@@ -379,7 +359,7 @@ fun FreeCellScreen(
     }
     var freeCells by remember(seed) { mutableStateOf<List<PlayingCard?>>(List(4) { null }) }
     var foundations by remember(seed) { mutableStateOf(List(4) { emptyList<PlayingCard>() }) }
-    var selected by remember(seed) { mutableStateOf<Pair<String, Int>?>(null) } // "free",idx or "cas",col
+    var selected by remember(seed) { mutableStateOf<Pair<String, Int>?>(null) }
     var oppFound by remember(seed) { mutableIntStateOf(0) }
 
     val totalFound = foundations.sumOf { it.size }
@@ -406,9 +386,7 @@ fun FreeCellScreen(
     }
 
     fun getCard(src: Pair<String, Int>): PlayingCard? = when (src.first) {
-        "free" -> freeCells[src.second]
-        "cas" -> cascades[src.second].lastOrNull()
-        else -> null
+        "free" -> freeCells[src.second]; "cas" -> cascades[src.second].lastOrNull(); else -> null
     }
 
     fun removeCard(src: Pair<String, Int>) {
@@ -425,18 +403,13 @@ fun FreeCellScreen(
         if (c.rank != expected) return false
         removeCard(src)
         val nf = foundations.mapIndexed { i, l -> if (i == suit) l + c else l }
-        foundations = nf
-        sync(nf)
-        return true
+        foundations = nf; sync(nf); return true
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF0E4D75)).padding(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF0E4D75)).padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Собрано: $totalFound/52", color = Color.White, fontWeight = FontWeight.ExtraBold)
-            if (config.mode == PlayMode.ONLINE) Text("Соп: $oppFound/52", color = Color(0xFFFFCA3A), fontWeight = FontWeight.Bold)
+            ScorePill("В доме", totalFound, Color(0xFF082F49), true)
+            if (config.mode == PlayMode.ONLINE) ScorePill("Соп.", oppFound, PlayBoxColors.OnlinePurple, false)
         }
         Spacer(Modifier.height(8.dp))
 
@@ -444,27 +417,16 @@ fun FreeCellScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (i in 0..3) {
                     CardChip(
-                        card = freeCells[i],
-                        selected = selected == ("free" to i),
-                        placeholder = "FREE",
-                        modifier = Modifier.size(width = 40.dp, height = 54.dp),
+                        card = freeCells[i], selected = selected == ("free" to i), placeholder = "ЯЧ",
+                        modifier = Modifier.size(width = 40.dp, height = 56.dp),
                         onClick = {
                             val sel = selected
-                            if (sel == null) {
-                                if (freeCells[i] != null) selected = "free" to i
-                            } else if (sel == ("free" to i)) {
-                                getCard(sel)?.let { tryToFoundation(sel, it.suit) }
+                            if (sel == null) { if (freeCells[i] != null) selected = "free" to i }
+                            else if (sel == ("free" to i)) { getCard(sel)?.let { tryToFoundation(sel, it.suit) }; selected = null }
+                            else if (freeCells[i] == null) {
+                                getCard(sel)?.let { c -> removeCard(sel); freeCells = freeCells.mapIndexed { idx, old -> if (idx == i) c else old } }
                                 selected = null
-                            } else if (freeCells[i] == null) {
-                                val c = getCard(sel)
-                                if (c != null) {
-                                    removeCard(sel)
-                                    freeCells = freeCells.mapIndexed { idx, old -> if (idx == i) c else old }
-                                }
-                                selected = null
-                            } else {
-                                selected = "free" to i
-                            }
+                            } else selected = "free" to i
                         }
                     )
                 }
@@ -473,13 +435,9 @@ fun FreeCellScreen(
                 val suits = listOf("♠", "♥", "♣", "♦")
                 for (s in 0..3) {
                     CardChip(
-                        card = foundations[s].lastOrNull(),
-                        placeholder = suits[s],
-                        modifier = Modifier.size(width = 40.dp, height = 54.dp),
-                        onClick = {
-                            selected?.let { tryToFoundation(it, s) }
-                            selected = null
-                        }
+                        card = foundations[s].lastOrNull(), placeholder = suits[s],
+                        modifier = Modifier.size(width = 40.dp, height = 56.dp),
+                        onClick = { selected?.let { tryToFoundation(it, s) }; selected = null }
                     )
                 }
             }
@@ -494,48 +452,32 @@ fun FreeCellScreen(
                     modifier = Modifier.weight(1f).fillMaxSize().clickable {
                         val sel = selected ?: return@clickable
                         if (pile.isEmpty()) {
-                            val c = getCard(sel)
-                            if (c != null) {
-                                removeCard(sel)
-                                cascades = cascades.mapIndexed { i, l -> if (i == col) l + c else l }
-                            }
+                            getCard(sel)?.let { c -> removeCard(sel); cascades = cascades.mapIndexed { i, l -> if (i == col) l + c else l } }
                             selected = null
                         }
                     },
                     verticalArrangement = Arrangement.spacedBy((-36).dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    if (pile.isEmpty()) {
-                        CardChip(null, placeholder = "", modifier = Modifier.fillMaxWidth().height(52.dp))
-                    } else {
-                        pile.forEachIndexed { idx, card ->
-                            val isTop = idx == pile.lastIndex
-                            CardChip(
-                                card = card,
-                                selected = isTop && selected == ("cas" to col),
-                                modifier = Modifier.fillMaxWidth().height(52.dp),
-                                onClick = {
-                                    if (!isTop) return@CardChip
-                                    val sel = selected
-                                    if (sel == null) {
-                                        selected = "cas" to col
-                                    } else if (sel == ("cas" to col)) {
-                                        tryToFoundation(sel, card.suit)
-                                        selected = null
-                                    } else {
-                                        val moving = getCard(sel)
-                                        val destTop = pile.last()
-                                        if (moving != null && moving.isRed != destTop.isRed && moving.rank + 1 == destTop.rank) {
-                                            removeCard(sel)
-                                            cascades = cascades.mapIndexed { i, l -> if (i == col) l + moving else l }
-                                            selected = null
-                                        } else {
-                                            selected = "cas" to col
-                                        }
-                                    }
+                    if (pile.isEmpty()) CardChip(null, placeholder = "", modifier = Modifier.fillMaxWidth().height(54.dp))
+                    else pile.forEachIndexed { idx, card ->
+                        val isTop = idx == pile.lastIndex
+                        CardChip(
+                            card = card, selected = isTop && selected == ("cas" to col),
+                            modifier = Modifier.fillMaxWidth().height(54.dp),
+                            onClick = {
+                                if (!isTop) return@CardChip
+                                val sel = selected
+                                if (sel == null) selected = "cas" to col
+                                else if (sel == ("cas" to col)) { tryToFoundation(sel, card.suit); selected = null }
+                                else {
+                                    val moving = getCard(sel); val destTop = pile.last()
+                                    if (moving != null && moving.isRed != destTop.isRed && moving.rank + 1 == destTop.rank) {
+                                        removeCard(sel); cascades = cascades.mapIndexed { i, l -> if (i == col) l + moving else l }; selected = null
+                                    } else selected = "cas" to col
                                 }
-                            )
-                        }
+                            }
+                        )
                     }
                 }
             }
@@ -550,7 +492,7 @@ fun FreeCellScreen(
     }
 }
 
-// 3. HEARTS (4 players: You + 3 Bots, Online score race)
+// 3. HEARTS
 @Composable
 fun HeartsScreen(
     config: LaunchConfig,
@@ -589,8 +531,7 @@ fun HeartsScreen(
         val nextHands = hands.mapIndexed { i, h -> if (i == player) h - card else h }
         val nextTrick = trick + (player to card)
         if (card.suit == 1) heartsBroken = true
-        hands = nextHands
-        trick = nextTrick
+        hands = nextHands; trick = nextTrick
 
         if (nextTrick.size == 4) {
             val leadSuit = nextTrick.first().second.suit
@@ -598,26 +539,13 @@ fun HeartsScreen(
                 .maxBy { if (it.second.rank == 1) 14 else it.second.rank }
             val trickPts: Int = nextTrick.sumOf { pair ->
                 val c = pair.second
-                val pts: Int = when {
-                    c.suit == 1 -> 1
-                    c.suit == 0 && c.rank == 12 -> 13
-                    else -> 0
-                }
+                val pts: Int = when { c.suit == 1 -> 1; c.suit == 0 && c.rank == 12 -> 13; else -> 0 }
                 pts
             }
-            val np = points.copyOf()
-            np[winnerPair.first] += trickPts
-            points = np
-            trick = emptyList()
-            turn = winnerPair.first
-
-            if (config.mode == PlayMode.ONLINE) {
-                onlineClient.sendState(JSONObject().put("pts", np[0]))
-            }
-            if (nextHands.all { it.isEmpty() }) {
-                val minPts = np.min()
-                if (np[0] == minPts) prefs.recordWin(GameId.HEARTS)
-            }
+            val np = points.copyOf(); np[winnerPair.first] += trickPts
+            points = np; trick = emptyList(); turn = winnerPair.first
+            if (config.mode == PlayMode.ONLINE) onlineClient.sendState(JSONObject().put("pts", np[0]))
+            if (nextHands.all { it.isEmpty() } && np[0] == np.min()) prefs.recordWin(GameId.HEARTS)
         } else {
             turn = (player + 1) % 4
         }
@@ -629,21 +557,16 @@ fun HeartsScreen(
             val hand = hands[turn]
             if (hand.isNotEmpty()) {
                 val leadSuit = trick.firstOrNull()?.second?.suit
-                val valid = if (leadSuit != null && hand.any { it.suit == leadSuit }) {
-                    hand.filter { it.suit == leadSuit }
-                } else if (trick.isEmpty() && !heartsBroken && hand.any { it.suit != 1 }) {
-                    hand.filter { it.suit != 1 }
-                } else hand
+                val valid = if (leadSuit != null && hand.any { it.suit == leadSuit }) hand.filter { it.suit == leadSuit }
+                else if (trick.isEmpty() && !heartsBroken && hand.any { it.suit != 1 }) hand.filter { it.suit != 1 }
+                else hand
                 val chosen = valid.minBy { if (it.suit == 0 && it.rank == 12) 100 else if (it.rank == 1) 14 else it.rank }
                 playCard(turn, chosen)
             }
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFFB93737)).padding(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Column(Modifier.fillMaxSize().background(Color(0xFFB93737)).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             ScorePill("Вы", points[0], Color(0xFF1D3557), turn == 0)
             ScorePill("Б1", points[1], Color(0xFF457B9D), turn == 1)
@@ -656,18 +579,15 @@ fun HeartsScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF8C2525),
-            modifier = Modifier.fillMaxWidth().height(150.dp)
-        ) {
+        Surface(shape = RoundedCornerShape(20.dp), color = Color(0xFF8C2525), modifier = Modifier.fillMaxWidth().height(155.dp)) {
             Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                 if (trick.isEmpty()) {
                     Text(if (turn == 0) "Ваш ход во взятку" else "Ходит Бот $turn...", color = Color.White, fontWeight = FontWeight.Bold)
                 } else {
                     trick.forEach { (p, c) ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(if (p == 0) "Вы" else "Б$p", color = Color.White, fontSize = 12.sp)
+                            Text(if (p == 0) "Вы" else "Б$p", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(4.dp))
                             CardChip(c)
                         }
                     }
@@ -680,18 +600,11 @@ fun HeartsScreen(
         val myHand = hands[0]
         val hasLead = leadSuit != null && myHand.any { it.suit == leadSuit }
 
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             myHand.forEach { card ->
                 val legal = turn == 0 && (!hasLead || card.suit == leadSuit) &&
                     !(trick.isEmpty() && !heartsBroken && myHand.any { it.suit != 1 } && card.suit == 1)
-                CardChip(
-                    card = card,
-                    selected = legal,
-                    onClick = { if (legal) playCard(0, card) }
-                )
+                CardChip(card = card, selected = legal, onClick = { if (legal) playCard(0, card) })
             }
         }
 
@@ -709,10 +622,11 @@ fun HeartsScreen(
     }
 }
 
-// 4. COLOR CARDS (UNO-style)
-private data class UnoCard(val colorIdx: Int, val value: String) // 0=R,1=B,2=G,3=Y,4=Wild
+// 4. COLOR CARDS (UNO-style with interactive Wild Color Picker!)
+private data class UnoCard(val colorIdx: Int, val value: String)
 
 private val UNO_COLORS = listOf(Color(0xFFEF476F), Color(0xFF118AB2), Color(0xFF06D6A0), Color(0xFFFFCA3A), Color(0xFF2B2D42))
+private val UNO_COLOR_NAMES = listOf("Красный", "Синий", "Зелёный", "Жёлтый")
 
 private fun buildUnoDeck(seed: Int): List<UnoCard> {
     val list = mutableListOf<UnoCard>()
@@ -742,13 +656,14 @@ fun ColorCardsScreen(
     var currentPlayer by remember(seed) { mutableIntStateOf(config.startingPlayer) }
     var winner by remember(seed) { mutableStateOf<Int?>(null) }
     var passTurnHide by remember(seed) { mutableStateOf(false) }
+    var pendingWildCardIdx by remember(seed) { mutableStateOf<Int?>(null) }
+    var actionBanner by remember(seed) { mutableStateOf("Сбросьте карту в цвет или номинал") }
 
     fun canPlay(c: UnoCard): Boolean = c.colorIdx == 4 || c.colorIdx == activeColor || c.value == topCard.value
 
     fun drawCards(targetPlayer: Int, count: Int) {
         val currentDeck = if (deck.size < count) buildUnoDeck(Random.nextInt(100000)) else deck
-        val drawn = currentDeck.take(count)
-        deck = currentDeck.drop(count)
+        val drawn = currentDeck.take(count); deck = currentDeck.drop(count)
         if (targetPlayer == 1) p1Hand = p1Hand + drawn else p2Hand = p2Hand + drawn
     }
 
@@ -772,18 +687,23 @@ fun ColorCardsScreen(
             winner = player
             if (config.mode != PlayMode.ONLINE && player == 1) prefs.recordWin(GameId.COLOR_CARDS)
             if (config.mode == PlayMode.ONLINE && !fromRemote) {
-                onlineClient.sendGameOver(player)
-                if (player == config.playerIndex) prefs.recordWin(GameId.COLOR_CARDS)
+                onlineClient.sendGameOver(player); if (player == config.playerIndex) prefs.recordWin(GameId.COLOR_CARDS)
             }
             return
         }
 
         val opp = if (player == 1) 2 else 1
         when (card.value) {
-            "+2" -> { drawCards(opp, 2); /* skip opp */ }
-            "+4" -> { drawCards(opp, 4); /* skip opp */ }
-            "⊘", "⇄" -> { /* 2-player skip = play again */ }
+            "+2" -> { drawCards(opp, 2); actionBanner = "Игрок $player кинул +2! Ещё ход" }
+            "+4" -> { drawCards(opp, 4); actionBanner = "+4 и цвет ${UNO_COLOR_NAMES[activeColor]}! Ещё ход" }
+            "⊘", "⇄" -> { actionBanner = "Пропуск хода соперника! Ещё ход" }
+            "W" -> {
+                actionBanner = "Выбран цвет: ${UNO_COLOR_NAMES[activeColor]}"
+                currentPlayer = opp
+                if (config.mode == PlayMode.LOCAL_2P) passTurnHide = true
+            }
             else -> {
+                actionBanner = "Ход Игрока $opp"
                 currentPlayer = opp
                 if (config.mode == PlayMode.LOCAL_2P) passTurnHide = true
             }
@@ -792,10 +712,9 @@ fun ColorCardsScreen(
 
     fun drawPass(player: Int, fromRemote: Boolean) {
         drawCards(player, 1)
-        if (config.mode == PlayMode.ONLINE && !fromRemote) {
-            onlineClient.sendMove(JSONObject().put("action", "draw"))
-        }
+        if (config.mode == PlayMode.ONLINE && !fromRemote) onlineClient.sendMove(JSONObject().put("action", "draw"))
         currentPlayer = if (player == 1) 2 else 1
+        actionBanner = "Взята карта из колоды"
         if (config.mode == PlayMode.LOCAL_2P) passTurnHide = true
     }
 
@@ -804,11 +723,8 @@ fun ColorCardsScreen(
             onlineClient.events.collect { ev ->
                 when (ev) {
                     is OnlineEvent.OpponentMove -> {
-                        if (ev.payload.optString("action") == "draw") {
-                            drawPass(ev.playerIndex, true)
-                        } else {
-                            playCard(ev.playerIndex, ev.payload.optInt("idx", 0), ev.payload.optInt("wild", 0), true)
-                        }
+                        if (ev.payload.optString("action") == "draw") drawPass(ev.playerIndex, true)
+                        else playCard(ev.playerIndex, ev.payload.optInt("idx", 0), ev.payload.optInt("wild", 0), true)
                     }
                     is OnlineEvent.RematchStart -> seed = ev.seed
                     else -> Unit
@@ -819,21 +735,17 @@ fun ColorCardsScreen(
 
     LaunchedEffect(currentPlayer, winner, p2Hand) {
         if (config.mode == PlayMode.SOLO && currentPlayer == 2 && winner == null) {
-            delay(550)
+            delay(600)
             val idx = p2Hand.indexOfFirst { canPlay(it) }
             if (idx >= 0) {
                 val bestColor = (0..3).maxBy { col -> p2Hand.count { it.colorIdx == col } }
                 playCard(2, idx, bestColor, false)
-            } else {
-                drawPass(2, false)
-            }
+            } else drawPass(2, false)
         }
     }
 
     val myViewer = when (config.mode) {
-        PlayMode.ONLINE -> config.playerIndex
-        PlayMode.LOCAL_2P -> currentPlayer
-        PlayMode.SOLO -> 1
+        PlayMode.ONLINE -> config.playerIndex; PlayMode.LOCAL_2P -> currentPlayer; PlayMode.SOLO -> 1
     }
     val myHand = if (myViewer == 1) p1Hand else p2Hand
     val oppCount = if (myViewer == 1) p2Hand.size else p1Hand.size
@@ -843,59 +755,52 @@ fun ColorCardsScreen(
         PlayMode.ONLINE -> currentPlayer == config.playerIndex && winner == null
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF7D4932)).padding(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF7D4932)).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         ScorePill(if (config.mode == PlayMode.SOLO) "Карт у бота" else "Карт у соперника", oppCount, UNO_COLORS[1], currentPlayer != myViewer)
+        Spacer(Modifier.height(6.dp))
+        Text(actionBanner, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Spacer(Modifier.weight(1f))
 
         if (passTurnHide) {
-            Button(onClick = { passTurnHide = false }, colors = ButtonDefaults.buttonColors(containerColor = PlayBoxColors.BoltGold)) {
-                Text("Передайте телефон Игроку $currentPlayer → Открыть карты", color = PlayBoxColors.DarkInk, fontWeight = FontWeight.ExtraBold)
-            }
+            PlayBoxButton(
+                onClick = { passTurnHide = false },
+                containerColor = PlayBoxColors.BoltGold,
+                contentColor = PlayBoxColors.DarkInk,
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)
+            ) { Text("Передайте телефон Игроку $currentPlayer → Открыть", fontWeight = FontWeight.ExtraBold, maxLines = 1) }
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    Modifier.size(width = 76.dp, height = 108.dp).clip(RoundedCornerShape(14.dp)).background(UNO_COLORS[activeColor]).border(3.dp, Color.White, RoundedCornerShape(14.dp)),
+                    Modifier.size(width = 80.dp, height = 114.dp).clip(RoundedCornerShape(16.dp)).background(UNO_COLORS[activeColor]).border(4.dp, Color.White, RoundedCornerShape(16.dp)),
                     contentAlignment = Alignment.Center
-                ) {
-                    Text(topCard.value, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 32.sp)
-                }
-                Button(
+                ) { Text(topCard.value, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 34.sp) }
+                PlayBoxButton(
                     enabled = canAct,
                     onClick = { drawPass(myViewer, false) },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = PlayBoxColors.DarkInk)
-                ) {
-                    Text("Взять\nкарту", color = Color.White, fontWeight = FontWeight.Bold)
-                }
+                    containerColor = PlayBoxColors.DarkInk,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
+                ) { Text("🃏 Взять карту", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
             }
         }
 
         Spacer(Modifier.weight(1f))
 
         if (!passTurnHide) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 myHand.forEachIndexed { idx, card ->
                     val playable = canAct && canPlay(card)
                     Box(
                         modifier = Modifier
-                            .size(width = 58.dp, height = 84.dp)
+                            .size(width = 60.dp, height = 88.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(UNO_COLORS[card.colorIdx])
                             .border(if (playable) 3.dp else 1.5.dp, if (playable) Color.White else Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                            .clickable(enabled = playable) {
-                                val wildCol = (0..3).maxBy { col -> myHand.count { it.colorIdx == col } }
-                                playCard(myViewer, idx, wildCol, false)
+                            .bounceClick(enabled = playable) {
+                                if (card.colorIdx == 4) pendingWildCardIdx = idx
+                                else playCard(myViewer, idx, card.colorIdx, false)
                             },
                         contentAlignment = Alignment.Center
-                    ) {
-                        Text(card.value, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
-                    }
+                    ) { Text(card.value, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp) }
                 }
             }
         }
@@ -911,5 +816,25 @@ fun ColorCardsScreen(
                 onExit = onExit
             )
         }
+    }
+
+    val wildIdx = pendingWildCardIdx
+    if (wildIdx != null) {
+        AlertDialog(
+            onDismissRequest = { pendingWildCardIdx = null },
+            containerColor = PlayBoxColors.HeaderSurface,
+            title = { Text("Выберите цвет", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    for (c in 0..3) {
+                        Box(
+                            Modifier.size(54.dp).clip(CircleShape).background(UNO_COLORS[c]).border(3.dp, PlayBoxColors.DarkInk, CircleShape)
+                                .bounceClick { pendingWildCardIdx = null; playCard(myViewer, wildIdx, c, false) }
+                        )
+                    }
+                }
+            },
+            confirmButton = {}
+        )
     }
 }

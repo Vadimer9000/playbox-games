@@ -914,13 +914,14 @@ fun ArrowsPuzzleScreen(config: LaunchConfig, prefs: PlayerPrefs, onlineClient: O
                         ) {
                             if (d != 0) {
                                 Canvas(Modifier.fillMaxSize(0.55f)) {
+                                    val w = this.size.width; val h = this.size.height
                                     val col = Color(0xFF0369A1); val st = 4.dp.toPx()
-                                    val cx = size.width / 2f; val cy = size.height / 2f
+                                    val cx = w / 2f; val cy = h / 2f
                                     when (d) {
-                                        1 -> { drawLine(col, Offset(cx, size.height), Offset(cx, 0f), st, StrokeCap.Round); drawLine(col, Offset(cx, 0f), Offset(cx - 8.dp.toPx(), 10.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(cx, 0f), Offset(cx + 8.dp.toPx(), 10.dp.toPx()), st, StrokeCap.Round) }
-                                        2 -> { drawLine(col, Offset(0f, cy), Offset(size.width, cy), st, StrokeCap.Round); drawLine(col, Offset(size.width, cy), Offset(size.width - 10.dp.toPx(), cy - 8.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(size.width, cy), Offset(size.width - 10.dp.toPx(), cy + 8.dp.toPx()), st, StrokeCap.Round) }
-                                        3 -> { drawLine(col, Offset(cx, 0f), Offset(cx, size.height), st, StrokeCap.Round); drawLine(col, Offset(cx, size.height), Offset(cx - 8.dp.toPx(), size.height - 10.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(cx, size.height), Offset(cx + 8.dp.toPx(), size.height - 10.dp.toPx()), st, StrokeCap.Round) }
-                                        4 -> { drawLine(col, Offset(size.width, cy), Offset(0f, cy), st, StrokeCap.Round); drawLine(col, Offset(0f, cy), Offset(10.dp.toPx(), cy - 8.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(0f, cy), Offset(10.dp.toPx(), cy + 8.dp.toPx()), st, StrokeCap.Round) }
+                                        1 -> { drawLine(col, Offset(cx, h), Offset(cx, 0f), st, StrokeCap.Round); drawLine(col, Offset(cx, 0f), Offset(cx - 8.dp.toPx(), 10.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(cx, 0f), Offset(cx + 8.dp.toPx(), 10.dp.toPx()), st, StrokeCap.Round) }
+                                        2 -> { drawLine(col, Offset(0f, cy), Offset(w, cy), st, StrokeCap.Round); drawLine(col, Offset(w, cy), Offset(w - 10.dp.toPx(), cy - 8.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(w, cy), Offset(w - 10.dp.toPx(), cy + 8.dp.toPx()), st, StrokeCap.Round) }
+                                        3 -> { drawLine(col, Offset(cx, 0f), Offset(cx, h), st, StrokeCap.Round); drawLine(col, Offset(cx, h), Offset(cx - 8.dp.toPx(), h - 10.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(cx, h), Offset(cx + 8.dp.toPx(), h - 10.dp.toPx()), st, StrokeCap.Round) }
+                                        4 -> { drawLine(col, Offset(w, cy), Offset(0f, cy), st, StrokeCap.Round); drawLine(col, Offset(0f, cy), Offset(10.dp.toPx(), cy - 8.dp.toPx()), st, StrokeCap.Round); drawLine(col, Offset(0f, cy), Offset(10.dp.toPx(), cy + 8.dp.toPx()), st, StrokeCap.Round) }
                                     }
                                 }
                             }

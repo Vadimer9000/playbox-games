@@ -75,3 +75,34 @@ jobs:
           name: app-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+      - name: Send APK to Telegram
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1 | sed 's/[_*`\[\]]/ /g')
+            BUILD_DATE=$(date +'%Y-%m-%d')
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            TARGET_APK="PlayBox-release_${BUILD_DATE}_${SHORT_SHA}.apk"
+            cp app/build/outputs/apk/release/app-release.apk "$TARGET_APK"
+            CAPTION="🎮 *Готова сборка PlayBox (54 игры)!*%0A%0A💬 _${COMMIT_MSG}_%0A⏰ $(date +'%d.%m.%Y %H:%M:%S UTC')%0A%0A#playbox"
+            RESP=$(curl -s --ipv4 --retry 5 --retry-delay 3 --retry-all-errors \
+                 -F chat_id="${TELEGRAM_CHAT_ID}" \
+                 -F "document=@${TARGET_APK};type=application/vnd.android.package-archive" \
+                 -F caption="${CAPTION}" \
+                 -F parse_mode="Markdown" \
+                 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument")
+            echo "Telegram response: $RESP"
+            if echo "$RESP" | grep -q '"ok":false'; then
+              curl -s --ipv4 --retry 5 --retry-delay 3 \
+                   -F chat_id="${TELEGRAM_CHAT_ID}" \
+                   -F "document=@${TARGET_APK};type=application/vnd.android.package-archive" \
+                   -F caption="🎮 Готова сборка PlayBox (54 игры)! ${BUILD_DATE} #playbox" \
+                   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument"
+            fi
+          else
+            echo "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured in repository secrets."
+          fi
